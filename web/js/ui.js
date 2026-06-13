@@ -1,37 +1,43 @@
-// ui.js — 控制面板：分析代码 / 着色切换 / 星海数据导入导出 / 展示参数。
-// 不碰渲染，只把操作翻译成对 ctx 的调用（ctx 由 main.js 提供）。
-
+// ui.js — 控制：分析代码（选语言）/ 词法轨迹开关 / 数据导入导出。
 export function setupUI(ctx) {
   const input = document.getElementById('code-input');
+  const lang = document.getElementById('lang');
   const status = document.getElementById('analyze-status');
 
-  // ---- 分析代码 ----
   const run = async () => {
     const code = input.value.trim();
     if (!code) { status.textContent = '请先在上方粘贴一段代码。'; return; }
-    status.textContent = '正在分析：bge 逐符号编码 + ecnu-max 判读义项…（约 20 秒）';
+    status.textContent = '正在词法分析 + ecnu-max 逐词解释…（约 20 秒）';
     try {
-      const r = await ctx.analyze(code);
-      status.textContent = `完成：${r.count} 个符号出现、${r.senses} 个义项。点代码里的符号或星海里的点查看判读。`;
+      const r = await ctx.analyze(code, lang.value);
+      status.textContent = r.llm
+        ? `完成：${r.count} 个 token。点代码里的词、或地图上的点，看它在这里是什么、干嘛。`
+        : `完成：${r.count} 个 token（仅词法分类）。配 ECNU 凭据后会有逐词大白话解释。`;
     } catch (e) {
-      status.innerHTML = '⚠ 分析失败（需后端 + ECNU 凭据，从 <b>http://127.0.0.1:5000</b> 打开）：' + esc(String(e.message || e));
+      status.innerHTML = '⚠ 失败（需后端，从 <b>http://127.0.0.1:5000</b> 打开）：' + esc(String(e.message || e));
     }
   };
   document.getElementById('btn-analyze').onclick = run;
+  input.onkeydown = (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); run(); } };
 
-  // ---- 着色切换（按义项 / 按符号名）----
-  const cs = document.getElementById('color-sense'), cy = document.getElementById('color-symbol');
-  const setColor = (mode) => {
-    cs.classList.toggle('active', mode === 'sense');
-    cy.classList.toggle('active', mode === 'symbol');
-    ctx.setColorBy(mode);
+  // 分级样例：一键填入并分析，解决「不知道从哪下手」
+  const EXAMPLES = {
+    var: 'x = 10\nname = "Tom"\nprint(name, x)',
+    if: 'score = 75\nif score >= 60:\n    print("pass")\nelse:\n    print("fail")',
+    loop: 'total = 0\nfor i in range(5):\n    total = total + i\nprint(total)',
+    func: 'def add(a, b):\n    result = a + b\n    return result',
+    poly: 'value = config[key]\ncipher = encrypt(data, key)\nkey = generate_key()',
   };
-  cs.onclick = () => setColor('sense');
-  cy.onclick = () => setColor('symbol');
+  document.querySelectorAll('.samples button').forEach((b) => {
+    b.onclick = () => { input.value = EXAMPLES[b.dataset.eg] || ''; lang.value = 'python'; run(); };
+  });
 
-  // ---- 星海数据导入 / 导出 ----
+  let on = true;
+  const tl = document.getElementById('toggle-links');
+  tl.onclick = () => { on = !on; tl.classList.toggle('active', on); ctx.setLinks(on); };
+
   document.getElementById('btn-export').onclick = () => {
-    if (!ctx.hasData) { status.textContent = '还没有可导出的数据，先分析一段代码。'; return; }
+    if (!ctx.hasData) { status.textContent = '先分析一段代码再导出。'; return; }
     ctx.exportData();
   };
   const fi = document.getElementById('file-import');
@@ -41,34 +47,14 @@ export function setupUI(ctx) {
     if (!f) return;
     const rd = new FileReader();
     rd.onload = () => {
-      try {
-        const obj = JSON.parse(rd.result);
-        ctx.importData(obj);
-        if (obj.meta && obj.meta.code) input.value = obj.meta.code;
-        status.textContent = `已导入星海数据：${f.name}`;
-      } catch (e) {
-        status.textContent = '导入失败：不是有效的分析 JSON。';
-      }
+      try { const o = JSON.parse(rd.result); ctx.importData(o); if (o.meta && o.meta.code) input.value = o.meta.code; status.textContent = `已导入：${f.name}`; }
+      catch (e) { status.textContent = '导入失败：不是有效的词法地图 JSON。'; }
       fi.value = '';
     };
     rd.readAsText(f);
   };
 
-  // ---- 展示参数 ----
-  const bg = document.getElementById('bg-intensity'), bl = document.getElementById('bloom');
-  bg.oninput = () => { const v = parseFloat(bg.value); ctx.setWorldIntensity?.(v); ctx.setBackgroundVisible?.(v > 0.08); };
-  bl.oninput = () => ctx.setBloomStrength?.(parseFloat(bl.value));
-
-  function refresh() {
-    const d = ctx.data;
-    document.getElementById('ro-count').textContent =
-      d ? `${d.n} / ${(d.meta.clusters || []).length}` : '—';
-    setColor('sense');
-  }
-  refresh();
-  return { refresh };
+  return {};
 }
 
-function esc(s) {
-  return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-}
+function esc(s) { return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }

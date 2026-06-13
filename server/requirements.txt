@@ -1,6 +1,4 @@
-# 后端依赖：Flask 托管前端 + /api/analyze。
-# 本地只做降维（PCA/UMAP），向量与判读都调 ECNU API，不需要 torch/transformers。
+# 后端依赖：Flask 托管前端 + Pygments 词法分析。
+# 语义解释调 ECNU API（用标准库 urllib），不需要 numpy/sklearn/torch。
 flask>=3.0
-numpy
-scikit-learn
-umap-learn
+pygments

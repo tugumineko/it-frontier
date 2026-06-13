@@ -3,80 +3,67 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>代码符号语义探索器 · 一词多义</title>
+  <title>代码词法地图 · 看懂每个单词</title>
   <link rel="icon" href="data:," />
   <link rel="stylesheet" href="./css/style.css" />
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "./vendor/three/three.module.js",
-      "three/addons/": "./vendor/three/jsm/"
-    }
-  }
-  </script>
 </head>
 <body>
-  <div id="app"></div>
+  <div id="stars"></div>
 
   <header id="topbar">
-    <div class="title">代码符号语义探索器 <span class="sub">· 一词多义</span></div>
-    <div class="tagline">输入代码，让 agent 判断每个符号在每一处的含义，<b>同名异义</b>在星海里分开。</div>
+    <div class="title">代码词法地图 <span class="sub">· 看懂每个单词</span></div>
+    <div class="tagline">把代码切成 token 分到<b>关键字 / 标识符 / 运算符 / 字面量</b>四区，agent 逐个讲它在这里干嘛。</div>
   </header>
 
-  <!-- 左：代码面板（输入 + 分析后可点符号 + 行高亮）-->
-  <aside id="code-panel">
-    <h3>代码</h3>
-    <textarea id="code-input" rows="6" placeholder="在此粘贴一段代码，点「分析」。&#10;同名符号在不同上下文的含义会被 agent 逐个判读。"></textarea>
-    <div class="row">
-      <button id="btn-analyze" class="primary">▶ 分析</button>
+  <main id="stage">
+    <!-- 左：代码面板 -->
+    <aside id="code-panel">
+      <div class="row">
+        <select id="lang">
+          <option value="python">Python</option>
+          <option value="javascript">JavaScript</option>
+          <option value="c">C</option>
+          <option value="cpp">C++</option>
+          <option value="java">Java</option>
+          <option value="go">Go</option>
+        </select>
+        <button id="btn-analyze" class="primary">▶ 分析</button>
+      </div>
+      <div class="samples">样例：<button data-eg="var">变量</button><button data-eg="if">条件</button><button data-eg="loop">循环</button><button data-eg="func">函数</button><button data-eg="poly">一词多义</button></div>
+      <textarea id="code-input" rows="6" placeholder="粘贴一段代码，点「分析」。&#10;例如：&#10;def add(a, b):&#10;    return a + b"></textarea>
+      <div class="hint" id="analyze-status">从 http://127.0.0.1:5000 打开。无凭据也能看词法分类，配 ECNU 凭据后有逐词解释。</div>
+      <div id="code-view" class="codeview"></div>
+    </aside>
+
+    <!-- 中：2D 词法地图 -->
+    <div id="map-wrap">
+      <svg id="map" viewBox="0 0 1000 680" preserveAspectRatio="xMidYMid meet"></svg>
     </div>
-    <div class="hint" id="analyze-status">需运行 server/app.py 并从 http://127.0.0.1:5000 打开。也可直接「导入星海数据」离线查看。</div>
-    <div id="code-view" class="codeview"></div>
-  </aside>
 
-  <!-- 右：控制面板 -->
-  <aside id="panel">
-    <section class="grp">
-      <h3>着色</h3>
-      <div class="row">
-        <button id="color-sense" class="seg active">按义项</button>
-        <button id="color-symbol" class="seg">按符号名</button>
-      </div>
-      <div class="hint">切「按符号名」同名同色像一团，切「按义项」同名按 agent 判读裂成不同色——这就是一词多义。</div>
-    </section>
+    <!-- 右：控制 -->
+    <aside id="panel">
+      <section class="grp">
+        <h3>视图</h3>
+        <button id="toggle-links" class="seg active" style="width:100%">🔗 显示词法轨迹</button>
+        <div class="hint">按代码顺序把 token 连成一条线，看代码读下来经过哪几类词。</div>
+      </section>
+      <section class="grp">
+        <h3>数据</h3>
+        <div class="row">
+          <button id="btn-export" class="seg">💾 导出</button>
+          <button id="btn-import" class="seg">📂 导入</button>
+        </div>
+        <input id="file-import" type="file" accept="application/json,.json" hidden />
+      </section>
+      <section class="grp">
+        <h3>图例</h3>
+        <div id="legend"></div>
+      </section>
+      <div class="ro-row" id="readout-mini"><span>token / 义项</span><b id="ro-count">—</b></div>
+    </aside>
+  </main>
 
-    <section class="grp">
-      <h3>星海数据</h3>
-      <div class="row">
-        <button id="btn-export" class="seg">💾 导出</button>
-        <button id="btn-import" class="seg">📂 导入</button>
-      </div>
-      <input id="file-import" type="file" accept="application/json,.json" hidden />
-      <div class="hint">导出当前分析为 JSON；导入可离线回放（无需后端）。</div>
-    </section>
-
-    <section class="grp">
-      <h3>展示</h3>
-      <label class="slider-label">背景强度
-        <input id="bg-intensity" type="range" min="0" max="1" step="0.02" value="1" />
-      </label>
-      <label class="slider-label">辉光强度
-        <input id="bloom" type="range" min="0" max="2" step="0.05" value="0.75" />
-      </label>
-    </section>
-
-    <div id="readout-mini" class="ro-row"><span>occurrence / 义项</span><b id="ro-count">—</b></div>
-  </aside>
-
-  <div id="tooltip" hidden></div>
-  <div id="mode"><span>自由观察</span></div>
   <div id="selcard" hidden></div>
-
-  <div id="hintbar">
-    <span>拖拽 = 旋转</span><span>滚轮 = 缩放</span><span>单击符号/星点 = 看判读</span><span>双击 = 飞入</span><span>ESC = 复位</span>
-  </div>
-  <button id="hint-toggle" title="操作提示">?</button>
-
   <div id="loading">就绪：粘贴代码，点分析…</div>
 
   <script type="module" src="./js/main.js"></script>
