@@ -109,6 +109,19 @@
   <!-- hover 词卡（屏幕投影拾取，单实例复用）-->
   <div id="tooltip" hidden></div>
 
+  <!-- 顶部模式指示：自由观察 / 聚焦:词 -->
+  <div id="mode"><span>自由观察</span></div>
+
+  <!-- 选中词卡（单击选择，相机不动；含飞入/取消）-->
+  <div id="selcard" hidden></div>
+
+  <!-- 底部操作提示条（首次显示数秒后淡出，? 可再唤出）-->
+  <div id="hintbar">
+    <span>拖拽 = 旋转</span><span>滚轮 = 缩放</span><span>右键 = 平移</span>
+    <span>单击 = 看词</span><span>双击 = 飞入</span><span>ESC = 复位</span>
+  </div>
+  <button id="hint-toggle" title="操作提示">?</button>
+
   <!-- 右下角 研究图 HUD（测谎铁证）-->
   <div id="charts">
     <div class="ch-head">

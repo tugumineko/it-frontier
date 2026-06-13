@@ -84,12 +84,29 @@ finalComposer.addPass(mixPass);
 finalComposer.addPass(vignette);
 finalComposer.addPass(new OutputPass());
 
-// ---- 相机聚焦某聚类（案例库用）----
-let focusTarget = null;
+// ---- 相机过渡（有界缓动 tween：飞入/复位都走它，不眩晕、可中断）----
 let clusterCentroids = null;
-let focusedPoint = -1;   // 聚焦的词索引（点击拾取），-1=未聚焦词
+let homeState = null;                 // 全景机位锚点（saveState）
+let flight = null;                    // {t0,dur,fromP,toP,fromT,toT} 进行中的飞行
+const easeInOutCubic = (k) => (k < 0.5 ? 4*k*k*k : 1 - Math.pow(-2*k+2, 3)/2);
 
-// 某个词当前的世界坐标（lerp(pca,umap,morph) 经星系矩阵）
+function captureState() { return { pos: camera.position.clone(), target: controls.target.clone() }; }
+
+// 飞向某世界点：沿当前视线方向退 dist，保留方位角不甩头；同步插值 position + target。
+function flyToPoint(toPos, dist) {
+  const fromP = camera.position.clone(), fromT = controls.target.clone();
+  const dir = fromP.clone().sub(fromT).normalize();
+  const toP = toPos.clone().add(dir.multiplyScalar(dist));
+  flight = { t0: performance.now(), dur: 650, fromP, toP, fromT, toT: toPos.clone() };
+  controls.enabled = false;           // 飞行期间锁手动控制，防与补间打架
+}
+function flyToState(s) {
+  flight = { t0: performance.now(), dur: 650, fromP: camera.position.clone(), toP: s.pos.clone(),
+             fromT: controls.target.clone(), toT: s.target.clone() };
+  controls.enabled = false;
+}
+function cancelFlight() { if (flight) { flight = null; controls.enabled = true; } }  // 中途打断
+
 const _v = new THREE.Vector3();
 function wordWorldPos(i) {
   const d = galaxy.data, m = galaxy.morph;
@@ -112,12 +129,13 @@ function makeCentroids(data) {
   return acc;
 }
 function focusCluster(id) {
-  focusedPoint = -1;
-  if (id == null || !clusterCentroids) { focusTarget = null; controls.autoRotate = true; return; }
+  if (id == null || !clusterCentroids) { return; }
   const c = clusterCentroids[id]; if (!c) return;
   const p = galaxy.morph > 0.5 ? c.umap : c.pca;
-  focusTarget = { pos: new THREE.Vector3(p[0], p[1], p[2]).multiplyScalar(GALAXY_SCALE), dist: 90 };
   controls.autoRotate = false;
+  if (galaxy.setSpin) galaxy.setSpin(false);
+  flyToPoint(new THREE.Vector3(p[0], p[1], p[2]).multiplyScalar(GALAXY_SCALE), 130);
+  setMode('聚焦：' + (galaxy.data.meta.clusters?.[id]?.name || ('簇' + id)));
 }
 
 // ---- 主流程 ----
@@ -137,6 +155,9 @@ let galaxy;
       setPointScale: (v) => { galaxy.uniforms.uPointScale.value = v; },
     });
     setupCharts(data);
+    controls.update();
+    homeState = captureState();        // 锚定全景机位，供"返回总览/ESC"平滑飞回
+    setMode('自由观察');
     document.getElementById('loading').classList.add('hidden');
   } catch (e) {
     document.getElementById('loading').textContent = '加载失败：' + e.message;
@@ -155,17 +176,12 @@ function animate() {
   world.update(dt, camera);
   if (galaxy) galaxy.update(dt);
 
-  // 聚焦某个词：让目标点随星系自转持续居中
-  if (focusedPoint >= 0 && galaxy && focusTarget) {
-    galaxy.points.updateMatrixWorld();
-    focusTarget.pos.copy(wordWorldPos(focusedPoint));
-  }
-
-  if (focusTarget) {
-    controls.target.lerp(focusTarget.pos, dt * 1.8);
-    const dir = camera.position.clone().sub(controls.target).normalize();
-    const want = focusTarget.pos.clone().add(dir.multiplyScalar(focusTarget.dist));
-    camera.position.lerp(want, dt * 1.8);
+  // 相机飞行（有界缓动 easeInOutCubic：飞入/复位共用，落地交还控制）
+  if (flight) {
+    const k = easeInOutCubic(Math.min(1, (now - flight.t0) / flight.dur));
+    camera.position.lerpVectors(flight.fromP, flight.toP, k);
+    controls.target.lerpVectors(flight.fromT, flight.toT, k);
+    if (k >= 1) { flight = null; controls.enabled = true; }
   }
   controls.update();
 
@@ -189,9 +205,21 @@ window.addEventListener('resize', () => {
   finalComposer.setSize(w, h);
 });
 
-// ---- 拾取：屏幕投影最近点（兼容 GPU morph/缩放/自转，比 raycaster 更稳）----
+// ============ 交互（按交互设计计划重做）============
+// 分层：hover=轻预览(不动相机) · 单击=纯选择(不动相机) · 双击/聚焦=平滑飞入 · ESC=分级复位。
+// 旋转(拖拽)绝不触发选择/聚焦：用位移+时间阈值合成"真单击"，并用 OrbitControls start/end 做闸门。
+const el = renderer.domElement;
 const tooltip = document.getElementById('tooltip');
+const selcard = document.getElementById('selcard');
+const modeEl = document.getElementById('mode');
 const _pv = new THREE.Vector3();
+const escHtml = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+const tokenInfo = (i) => {
+  const d = galaxy.data;
+  const cl = d.meta.clusters?.[d.cluster[i]]?.name || ('簇' + d.cluster[i]);
+  const dist = (d.distortionRaw ? d.distortionRaw[i] : d.distortion[i]);
+  return { token: d.tokens[i] || '·', cl, distPct: (dist * 100).toFixed(0) };
+};
 function pickAt(mx, my) {
   if (!galaxy) return -1;
   galaxy.points.updateMatrixWorld();
@@ -201,43 +229,105 @@ function pickAt(mx, my) {
   for (let i = 0; i < d.n; i++) {
     _pv.set(d.pca[i*3]*(1-m)+d.umap[i*3]*m, d.pca[i*3+1]*(1-m)+d.umap[i*3+1]*m, d.pca[i*3+2]*(1-m)+d.umap[i*3+2]*m)
        .applyMatrix4(mw).project(camera);
-    if (_pv.z > 1) continue;        // 在相机后方
+    if (_pv.z > 1) continue;
     const sx = (_pv.x*0.5+0.5)*w, sy = (-_pv.y*0.5+0.5)*h;
     const dx = sx-mx, dy = sy-my, dd = dx*dx+dy*dy;
     if (dd < bestD) { bestD = dd; best = i; }
   }
   return best;
 }
-function esc(s){ return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 
-let lastPick = 0;
-renderer.domElement.addEventListener('pointermove', (e) => {
-  const now = performance.now(); if (now - lastPick < 30) return; lastPick = now;
-  const i = pickAt(e.clientX, e.clientY);
-  if (i < 0) { tooltip.hidden = true; return; }
-  const d = galaxy.data;
-  const cl = d.meta.clusters?.[d.cluster[i]]?.name || ('簇' + d.cluster[i]);
-  const dist = (d.distortionRaw ? d.distortionRaw[i] : d.distortion[i]);
+function setMode(text) { if (modeEl) modeEl.firstChild ? (modeEl.firstChild.textContent = text) : (modeEl.textContent = text); modeEl?.classList.toggle('focused', !text.startsWith('自由')); }
+
+// ---- 选择（纯高亮，绝不动相机）----
+let selected = -1;
+function select(i) {
+  selected = i;
+  galaxy.setHighlight(galaxy.data.cluster[i]);   // 高亮同簇，压暗其余(focus+context)
+  if (galaxy.setSpin) galaxy.setSpin(false);     // 暂停自转，选中的词不漂走
+  const info = tokenInfo(i);
+  selcard.hidden = false;
+  selcard.innerHTML = `<div class="tk">${escHtml(info.token)}</div>` +
+    `<div class="dv">${escHtml(info.cl)} · 全局失真 <b>${info.distPct}%</b></div>` +
+    `<div class="row"><button id="sel-focus" class="seg">🎯 飞入(双击)</button><button id="sel-close" class="seg">✕ 取消(Esc)</button></div>`;
+  document.getElementById('sel-focus').onclick = () => flyToPoint(wordWorldPos(i).clone(), 55);
+  document.getElementById('sel-close').onclick = () => deselect();
+}
+function deselect() {
+  selected = -1;
+  galaxy.setHighlight(-1);
+  if (galaxy.setSpin) galaxy.setSpin(true);
+  selcard.hidden = true;
+}
+
+// ---- 拖拽闸门：拖拽中不拾取、不弹卡 ----
+let isOrbiting = false;
+controls.addEventListener('start', () => { isOrbiting = true; tooltip.hidden = true; });
+controls.addEventListener('end', () => { requestAnimationFrame(() => { isOrbiting = false; }); });
+
+// ---- hover 预览（rAF 节流；拖拽/飞行中不打扰；命中切光标）----
+let hoverX = 0, hoverY = 0, hoverPending = false, autoRotateStopped = false;
+el.addEventListener('pointermove', (e) => {
+  hoverX = e.clientX; hoverY = e.clientY;
+  if (!hoverPending) { hoverPending = true; requestAnimationFrame(doHover); }
+});
+function doHover() {
+  hoverPending = false;
+  if (!galaxy || isOrbiting || flight) { tooltip.hidden = true; el.style.cursor = isOrbiting ? 'grabbing' : 'grab'; return; }
+  const i = pickAt(hoverX, hoverY);
+  if (i < 0) { tooltip.hidden = true; el.style.cursor = 'grab'; return; }
+  el.style.cursor = 'pointer';
+  const info = tokenInfo(i);
   tooltip.hidden = false;
-  tooltip.style.left = e.clientX + 'px'; tooltip.style.top = e.clientY + 'px';
-  tooltip.innerHTML = `<div class="tk">${esc(d.tokens[i] || '·')}</div>` +
-    `<div class="dv">${esc(cl)} · 全局失真 <b>${(dist*100).toFixed(0)}%</b></div>`;
-});
-renderer.domElement.addEventListener('pointerleave', () => { tooltip.hidden = true; });
+  tooltip.style.left = (hoverX + 12) + 'px'; tooltip.style.top = (hoverY) + 'px';
+  tooltip.innerHTML = `<div class="tk">${escHtml(info.token)}</div>` +
+    `<div class="dv">${escHtml(info.cl)} · 全局失真 <b>${info.distPct}%</b> · 双击飞入</div>`;
+}
+el.addEventListener('pointerleave', () => { tooltip.hidden = true; });
 
-// 区分"拖拽旋转"与"点击选择"：记录按下位置，松开时位移过大=拖拽，不当点击。
-let _downX = 0, _downY = 0, _downT = 0;
-renderer.domElement.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0) return;
-  _downX = e.clientX; _downY = e.clientY; _downT = performance.now();
+// ---- 真单击合成（位移≤5px & 时长≤300ms，且非拖拽）→ 仅选择 ----
+let down = null;
+el.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 && e.pointerType === 'mouse') return;
+  if (!autoRotateStopped) { controls.autoRotate = false; autoRotateStopped = true; }
+  cancelFlight();                          // 飞行中按下即接管(可中断)
+  try { el.setPointerCapture(e.pointerId); } catch (_) {}
+  down = { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId };
 });
-renderer.domElement.addEventListener('click', (e) => {
-  // 旋转(拖拽) / 长按 都不触发聚焦，避免"转视角却被强行聚焦"
-  if (Math.hypot(e.clientX - _downX, e.clientY - _downY) > 6) return;
-  if (performance.now() - _downT > 500) return;
+el.addEventListener('pointerup', (e) => {
+  if (!down || e.pointerId !== down.id) return;
+  const dist = Math.hypot(e.clientX - down.x, e.clientY - down.y);
+  const dt = performance.now() - down.t;
+  const TH = e.pointerType === 'mouse' ? 5 : 10;
+  down = null;
+  if (isOrbiting || dist > TH || dt > 300) return;   // 拖拽/长按 → 不是点击
+  const i = pickAt(e.clientX, e.clientY);
+  if (i < 0) { deselect(); return; }                 // 点空白=取消选择
+  select(i);                                         // 单击只选择，绝不动相机
+});
+
+// ---- 双击 → 平滑飞入 ----
+el.addEventListener('dblclick', (e) => {
   const i = pickAt(e.clientX, e.clientY);
   if (i < 0) return;
-  focusedPoint = i;
-  focusTarget = { pos: wordWorldPos(i).clone(), dist: 55 };
-  galaxy.setHighlight(galaxy.data.cluster[i]);   // 高亮同簇，压暗其余(focus+context)
+  select(i);
+  flyToPoint(wordWorldPos(i).clone(), 55);
+  setMode('聚焦：' + escHtml(tokenInfo(i).token));
 });
+
+// ---- ESC 分级：先取消选择，再平滑飞回全景 ----
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (selected >= 0) { deselect(); }
+  else if (homeState) { if (galaxy.setSpin) galaxy.setSpin(true); flyToState(homeState); setMode('自由观察'); }
+});
+
+// ---- 操作提示条：首次显示约 6s 后淡出；? 可再唤出 ----
+const hintbar = document.getElementById('hintbar');
+const hintToggle = document.getElementById('hint-toggle');
+let hintTimer = setTimeout(() => hintbar.classList.add('faded'), 6000);
+hintToggle.onclick = () => {
+  clearTimeout(hintTimer);
+  hintbar.classList.toggle('faded');
+  if (!hintbar.classList.contains('faded')) hintTimer = setTimeout(() => hintbar.classList.add('faded'), 6000);
+};

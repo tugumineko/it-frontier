@@ -248,6 +248,7 @@ export class Galaxy {
   }
   setHighlight(clusterId) { this.uniforms.uHighlight.value = clusterId; }
   toggleLinks(on) { this._linksOn = on; }
+  setSpin(on) { this._spin = on; }
   setLinkThreshold(t) { this.linkUniforms.uLinkThresh.value = t; }
 
   setLivePoints(points) {
@@ -281,7 +282,7 @@ export class Galaxy {
     const target = this._linksOn ? 1 : 0;
     const o = this.linkUniforms.uOpacity;
     o.value += (target - o.value) * Math.min(1, dt * 4.0);
-    this.points.rotation.y += dt * 0.015;
+    if (this._spin !== false) this.points.rotation.y += dt * 0.015;   // 选中时暂停自转
     this.links.rotation.y = this.points.rotation.y;
     this.liveGroup.rotation.y = this.points.rotation.y;
   }
