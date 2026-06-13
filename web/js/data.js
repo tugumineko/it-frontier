@@ -57,8 +57,8 @@ function normalize(raw) {
 
     distortionRaw[i] = raw.distortion[i];
     distortion[i] = Math.max(0, Math.min(1, (raw.distortion[i] - lo) / span));  // 稳健归一
-    // 高频词（靠前）画得更大更亮，让星系有层次
-    size[i] = 0.8 + 1.8 * (raw.size ? raw.size[i] : Math.random());
+    // 大小仅做轻微纹理变化(词频)，范围压窄，避免"大/亮"被误读为"可信"——失真只看颜色
+    size[i] = 1.0 + 0.5 * (raw.size ? raw.size[i] : Math.random());
   }
 
   return {

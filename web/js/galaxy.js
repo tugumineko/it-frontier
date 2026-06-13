@@ -54,11 +54,11 @@ const VERT = /* glsl */`
   uniform float uPointScale;
   uniform float uPixelRatio;
   uniform float uHighlight;
+  uniform float uDim2;          // focus+context 压暗强度 0..1（平滑动画）
   uniform float uTime;
 
   varying vec3 vColor;
   varying float vAlpha;
-  varying float vBoost;
 
   ${COLORMAP_GLSL}
 
@@ -77,18 +77,17 @@ const VERT = /* glsl */`
     gl_Position = projectionMatrix * mv;
 
     float d = clamp(aDistortion, 0.0, 1.0);
-    float lie = step(0.5, uColorMode);          // 0 聚类模式 / 1 任一热力模式
+    float lie = step(0.5, uColorMode);
 
-    // 失真同时驱动：颜色 + 大小 + 亮度 → 高失真词=报警的红巨星
+    // ★失真只用「颜色」表达（Turbo/viridis）。大小/亮度/辉光对所有点一致，
+    //   绝不随失真变化——否则"越亮"会被误读成"越可信"(实则相反)。
     vColor = mix(aClusterColor, heatColor(d, uColorMode), lie);
-    float tw = 0.85 + 0.15 * sin(uTime * 1.5 + aCluster * 2.0 + aSize * 30.0);
-    float sizeMul = mix(1.0, 2.4, d * lie);     // 热力模式下高失真更大
-    gl_PointSize = aSize * uPointScale * uPixelRatio * tw * sizeMul * (320.0 / -mv.z);
-    vBoost = mix(1.0, 0.55 + d * 1.7, lie);     // 热力模式下高失真更亮、低失真压暗
+    float tw = 0.92 + 0.08 * sin(uTime * 1.5 + aCluster * 2.0 + aSize * 30.0); // 轻微闪烁(纯装饰)
+    gl_PointSize = aSize * uPointScale * uPixelRatio * tw * (320.0 / -mv.z);   // 大小=词频(轻微)，与失真无关
 
-    float hi = 1.0;
-    if (uHighlight >= 0.0) hi = abs(aCluster - uHighlight) < 0.5 ? 1.0 : 0.06;
-    vAlpha = hi;
+    // focus+context：非高亮簇按 uDim2 平滑压暗（取消选择时 uDim2→0，不会突然变亮）
+    float inC = (uHighlight >= 0.0 && abs(aCluster - uHighlight) < 0.5) ? 1.0 : 0.0;
+    vAlpha = mix(mix(1.0, 0.07, uDim2), 1.0, inC);
   }
 `;
 
@@ -96,7 +95,6 @@ const FRAG = /* glsl */`
   precision highp float;
   varying vec3 vColor;
   varying float vAlpha;
-  varying float vBoost;
 
   void main() {
     vec2 uv = gl_PointCoord - vec2(0.5);
@@ -104,7 +102,7 @@ const FRAG = /* glsl */`
     if (r > 0.5) discard;
     float halo = smoothstep(0.5, 0.0, r);
     float core = smoothstep(0.18, 0.0, r);
-    vec3 col = vColor * (0.7 + 1.6 * core) * vBoost;   // 核提亮 + 失真亮度
+    vec3 col = vColor * (0.7 + 1.6 * core);   // 均匀核提亮(所有点一致)，不随失真
     float a = (halo * 0.55 + core * 0.9) * vAlpha;
     gl_FragColor = vec4(col, a);
   }
@@ -173,8 +171,9 @@ export class Galaxy {
     this.uniforms = {
       uMorph: { value: 0 }, uColorMode: { value: 0 },
       uPointScale: { value: 2.0 }, uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
-      uHighlight: { value: -1 }, uTime: { value: 0 },
+      uHighlight: { value: -1 }, uDim2: { value: 0 }, uTime: { value: 0 },
     };
+    this._dimTarget = 0;
     this.material = new THREE.ShaderMaterial({
       uniforms: this.uniforms, vertexShader: VERT, fragmentShader: FRAG,
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
@@ -246,7 +245,10 @@ export class Galaxy {
   setColorMode(mode) { // 'cluster' | 'turbo'/'lie' | 'viridis'
     this.uniforms.uColorMode.value = mode === 'viridis' ? 2 : (mode === 'cluster' ? 0 : 1);
   }
-  setHighlight(clusterId) { this.uniforms.uHighlight.value = clusterId; }
+  setHighlight(clusterId) {
+    if (clusterId >= 0) { this.uniforms.uHighlight.value = clusterId; this._dimTarget = 1; }
+    else { this._dimTarget = 0; }   // 取消：保留 uHighlight，仅让 uDim2 平滑回 0（不突然变亮）
+  }
   toggleLinks(on) { this._linksOn = on; }
   setSpin(on) { this._spin = on; }
   setLinkThreshold(t) { this.linkUniforms.uLinkThresh.value = t; }
@@ -282,6 +284,9 @@ export class Galaxy {
     const target = this._linksOn ? 1 : 0;
     const o = this.linkUniforms.uOpacity;
     o.value += (target - o.value) * Math.min(1, dt * 4.0);
+    // focus+context 压暗平滑过渡（取消选择时不会突然变亮/辉光跳变）
+    const u = this.uniforms.uDim2;
+    u.value += (this._dimTarget - u.value) * Math.min(1, dt * 5.0);
     if (this._spin !== false) this.points.rotation.y += dt * 0.015;   // 选中时暂停自转
     this.links.rotation.y = this.points.rotation.y;
     this.liveGroup.rotation.y = this.points.rotation.y;
