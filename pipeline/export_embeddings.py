@@ -111,19 +111,21 @@ def main():
                "dPca": [round(float(v),3) for v in norm01(dPca)],
                "dUmap": [round(float(v),3) for v in norm01(dUmap)]}
 
-    # ---- 真·近邻连线（①意大利面）：高维(768D)真邻居，PCA 短、UMAP 被扯长 ----
-    from sklearn.neighbors import NearestNeighbors
-    n_sample = min(360, topk)
-    sample_idx = np.linspace(0, topk - 1, n_sample).astype(int)
-    nn_hi = NearestNeighbors(n_neighbors=6).fit(X)
-    _, nb = nn_hi.kneighbors(X[sample_idx])
-    seen, links = set(), []
-    for s, i in enumerate(sample_idx):
-        for j in nb[s, 1:]:
-            a, b = (int(i), int(j)) if i < j else (int(j), int(i))
-            if (a, b) in seen:
-                continue
-            seen.add((a, b)); links.append([a, b])
+    # ---- 全局错配连线：高维距离 vs UMAP距离 错配最大的对 = "全局的谎" ----
+    # 修正叙事：UMAP 保局部近邻(真邻居不会被扯断)，它的谎在全局——
+    # 有些词高维上本该很远，UMAP 却画得很近(假凑近)；或本该近，被画得很远。
+    # 取错配最大的 N 对连线、按错配度上色，直观展示全局距离是假的。
+    nP = 2500
+    li = rng.integers(0, topk, nP); lj = rng.integers(0, topk, nP)
+    keep = li != lj; li, lj = li[keep], lj[keep]
+    dh = 1.0 - (Xn[li] * Xn[lj]).sum(1)                 # 高维余弦距离
+    du = np.linalg.norm(umap3[li] - umap3[lj], axis=1)  # UMAP 距离
+    hN = (dh - dh.min()) / (np.ptp(dh) + 1e-8)
+    uN = (du - du.min()) / (np.ptp(du) + 1e-8)
+    mism = np.abs(hN - uN)                              # 0..1 错配度
+    order = np.argsort(-mism)[:400]
+    links = [[int(li[k]), int(lj[k])] for k in order]
+    link_score = [round(float(mism[k]), 3) for k in order]
 
     # 词频近似用 1/(id+1) 当大小权重（常见词更大更亮）
     size = (1.0 - ids / topk).astype(np.float32)
@@ -146,6 +148,7 @@ def main():
         "distortion": [round(float(v), 3) for v in distortion],
         "size": [round(float(v), 3) for v in size],
         "links": links,
+        "link_score": link_score,
     }
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:

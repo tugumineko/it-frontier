@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>潜空间银河 · UMAP 测谎仪</title>
+  <link rel="icon" href="data:," />
   <link rel="stylesheet" href="./css/style.css" />
   <!--
     依赖说明：Three.js 完整 vendoring 到 ./vendor/three/，不依赖任何 CDN。
@@ -59,8 +60,11 @@
 
     <section class="grp">
       <h3>关系揭示</h3>
-      <button id="btn-links" class="seg" style="width:100%">🍝 真·近邻连线</button>
-      <div class="hint">高维里真正的近邻。拖动上面的 PCA⇄UMAP：<b>PCA 里连线短，UMAP 里被扯成横跨全图的长线</b>——本该相邻的概念被 UMAP 拆散了。这是热力图给不了的"关系"。</div>
+      <button id="btn-links" class="seg" style="width:100%">🔗 全局错配连线</button>
+      <label class="slider-label">只显错配 ≥
+        <input id="link-thresh" type="range" min="0" max="1" step="0.02" value="0.5" />
+      </label>
+      <div class="hint">高维距离 vs UMAP 距离<b>错配最大</b>的词对（红=错得越狠）。这些词高维上本该很远，UMAP 却画得很近（或反之）——<b>UMAP 的全局距离是假的</b>。这正是热力图给不了的"关系结构"。</div>
     </section>
 
     <section class="grp">

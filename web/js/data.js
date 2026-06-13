@@ -66,7 +66,8 @@ function normalize(raw) {
     tokens: raw.tokens,
     cluster, clusterColor, distortion, distortionRaw, size,
     pca, umap,
-    links: raw.links || [],   // 真·近邻连线（[i,j] 索引对）
+    links: raw.links || [],          // 全局错配连线（[i,j] 索引对）
+    linkScore: raw.link_score || [], // 每条连线的全局错配度 0..1
     meta: raw.meta || {},
   };
 }

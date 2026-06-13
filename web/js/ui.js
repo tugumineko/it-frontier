@@ -79,6 +79,11 @@ export function setupUI(ctx) {
     galaxy.toggleLinks(on);
   };
   btnLinks.onclick = () => setLinks(!linksOn);
+  const linkThresh = document.getElementById('link-thresh');
+  if (linkThresh) {
+    galaxy.setLinkThreshold(parseFloat(linkThresh.value));
+    linkThresh.oninput = () => galaxy.setLinkThreshold(parseFloat(linkThresh.value));
+  }
 
   // ---- 一键测谎：切到 UMAP + 测谎色（汇报爆点）----
   document.getElementById('btn-reveal').onclick = () => {

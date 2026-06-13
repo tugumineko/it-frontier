@@ -110,18 +110,18 @@ const FRAG = /* glsl */`
   }
 `;
 
-// ---- 意大利面连线 ----
+// ---- 全局错配连线（高维 vs UMAP 距离错配最大的对）----
 const LINK_VERT = /* glsl */`
   attribute vec3 aPca;
   attribute vec3 aUmap;
-  attribute float aDistortion;
+  attribute float aScore;    // 全局错配度 0..1
   attribute float aCluster;
   uniform float uMorph;
   uniform float uHighlight;
   uniform float uTime;
-  varying float vDist;
+  uniform float uLinkThresh; // 只显错配 > 阈值的连线
+  varying float vScore;
   varying float vAlpha;
-  // 与星点相同的漂移，保证连线端点贴住星星
   vec3 drift(vec3 p) {
     float t = uTime * 0.25;
     return vec3(
@@ -133,20 +133,21 @@ const LINK_VERT = /* glsl */`
   void main() {
     vec3 pos = mix(aPca, aUmap, uMorph) + drift(aPca);
     gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-    vDist = aDistortion;
-    float hi = 1.0;
-    if (uHighlight >= 0.0) hi = abs(aCluster - uHighlight) < 0.5 ? 1.0 : 0.04;
+    vScore = aScore;
+    float hi = (aScore >= uLinkThresh) ? 1.0 : 0.0;            // 低于阈值隐藏
+    if (uHighlight >= 0.0 && abs(aCluster - uHighlight) >= 0.5) hi *= 0.05;
     vAlpha = hi;
   }
 `;
 const LINK_FRAG = /* glsl */`
   precision highp float;
   uniform float uOpacity;
-  varying float vDist;
+  varying float vScore;
   varying float vAlpha;
   ${COLORMAP_GLSL}
   void main() {
-    gl_FragColor = vec4(turbo(vDist) * 1.2, uOpacity * vAlpha * (0.25 + 0.6 * vDist));
+    if (vAlpha <= 0.001) discard;
+    gl_FragColor = vec4(turbo(vScore) * 1.3, uOpacity * vAlpha * (0.3 + 0.6 * vScore));
   }
 `;
 
@@ -193,9 +194,19 @@ export class Galaxy {
   _buildLinks(data) {
     const links = data.links || [];
     const m = links.length;
+    // 每条连线的全局错配度：优先用 pipeline 的 link_score；缺失则用 |dPca-dUmap| 在前端近似
+    let score = data.linkScore && data.linkScore.length === m ? data.linkScore.slice() : null;
+    if (!score) {
+      const dist3 = (a, ia, b, ib) => Math.hypot(a[ia*3]-b[ib*3], a[ia*3+1]-b[ib*3+1], a[ia*3+2]-b[ib*3+2]);
+      const dp = [], du = [];
+      for (let e = 0; e < m; e++) { const [i,j]=links[e]; dp.push(dist3(data.pca,i,data.pca,j)); du.push(dist3(data.umap,i,data.umap,j)); }
+      const n01 = (arr) => { const lo=Math.min(...arr), hi=Math.max(...arr), sp=(hi-lo)||1; return arr.map(v=>(v-lo)/sp); };
+      const dpn = n01(dp), dun = n01(du);
+      score = dp.map((_, e) => Math.abs(dpn[e] - dun[e]));
+    }
     const aPca = new Float32Array(m * 2 * 3);
     const aUmap = new Float32Array(m * 2 * 3);
-    const aDist = new Float32Array(m * 2);
+    const aScore = new Float32Array(m * 2);
     const aClu = new Float32Array(m * 2);
     for (let e = 0; e < m; e++) {
       const [i, j] = links[e];
@@ -204,7 +215,7 @@ export class Galaxy {
         const v = e * 2 + s;
         aPca[v*3] = data.pca[idx*3]; aPca[v*3+1] = data.pca[idx*3+1]; aPca[v*3+2] = data.pca[idx*3+2];
         aUmap[v*3] = data.umap[idx*3]; aUmap[v*3+1] = data.umap[idx*3+1]; aUmap[v*3+2] = data.umap[idx*3+2];
-        aDist[v] = data.distortion[idx];
+        aScore[v] = score[e];
         aClu[v] = data.cluster[idx];
       }
     }
@@ -212,12 +223,13 @@ export class Galaxy {
     g.setAttribute('position', new THREE.BufferAttribute(aPca, 3));
     g.setAttribute('aPca', new THREE.BufferAttribute(aPca, 3));
     g.setAttribute('aUmap', new THREE.BufferAttribute(aUmap, 3));
-    g.setAttribute('aDistortion', new THREE.BufferAttribute(aDist, 1));
+    g.setAttribute('aScore', new THREE.BufferAttribute(aScore, 1));
     g.setAttribute('aCluster', new THREE.BufferAttribute(aClu, 1));
     this.linkUniforms = {
       uMorph: this.uniforms.uMorph, uHighlight: this.uniforms.uHighlight,
       uTime: this.uniforms.uTime,
       uOpacity: { value: 0 },   // 默认隐藏，切换时淡入
+      uLinkThresh: { value: 0.0 },
     };
     this.linkMat = new THREE.ShaderMaterial({
       uniforms: this.linkUniforms, vertexShader: LINK_VERT, fragmentShader: LINK_FRAG,
@@ -236,6 +248,7 @@ export class Galaxy {
   }
   setHighlight(clusterId) { this.uniforms.uHighlight.value = clusterId; }
   toggleLinks(on) { this._linksOn = on; }
+  setLinkThreshold(t) { this.linkUniforms.uLinkThresh.value = t; }
 
   setLivePoints(points) {
     this.liveGroup.clear();
