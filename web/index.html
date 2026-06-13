@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>潜空间银河 · UMAP 测谎仪</title>
+  <link rel="stylesheet" href="./css/style.css" />
+  <!--
+    依赖说明：Three.js 完整 vendoring 到 ./vendor/three/，不依赖任何 CDN。
+    这样汇报现场断网也能跑（满足"无 API / 离线"硬约束）。
+  -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three/three.module.js",
+      "three/addons/": "./vendor/three/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <!-- 3D 画布挂载点 -->
+  <div id="app"></div>
+
+  <!-- 顶部标题与一句话立意 -->
+  <header id="topbar">
+    <div class="title">潜空间银河 <span class="sub">· UMAP 测谎仪</span></div>
+    <div class="tagline">把模型内部的词向量画成星系，再证明——<b>越好看的聚类，越可能是降维算法编的</b>。</div>
+  </header>
+
+  <!-- 右侧控制面板 -->
+  <aside id="panel">
+    <section class="grp">
+      <h3>布局 Layout</h3>
+      <div class="row">
+        <button id="btn-pca" class="seg active">PCA（老实）</button>
+        <button id="btn-umap" class="seg">UMAP（戏精）</button>
+      </div>
+      <label class="slider-label">PCA ⇄ UMAP 渐变
+        <input id="morph" type="range" min="0" max="1" step="0.01" value="0" />
+      </label>
+    </section>
+
+    <section class="grp">
+      <h3>着色 Color</h3>
+      <div class="row">
+        <button id="btn-cluster" class="seg active">语义聚类</button>
+        <button id="btn-lie" class="seg">失真测谎</button>
+      </div>
+      <button id="btn-reveal" class="primary">⚡ 一键测谎（切到 UMAP + 烧红）</button>
+      <div class="legend" id="lie-legend" hidden>
+        <span>可信</span>
+        <div class="bar"></div>
+        <span>编造</span>
+      </div>
+    </section>
+
+    <section class="grp">
+      <h3>精选案例库</h3>
+      <select id="case-select">
+        <option value="-1">— 全部 —</option>
+      </select>
+      <div class="hint">挑"视觉最紧致、失真最高"的聚类，聚焦展示。</div>
+    </section>
+
+    <section class="grp">
+      <h3>实时检验（本地后端）</h3>
+      <textarea id="live-input" rows="2" placeholder="老师给一句话 / 几个词，回车现跑…"></textarea>
+      <button id="btn-live" class="primary">▶ 现场跑这段输入</button>
+      <div class="hint" id="live-status">后端未连接时会自动提示，可改用案例库。</div>
+    </section>
+  </aside>
+
+  <!-- 左下角读数面板 -->
+  <div id="readout">
+    <div class="ro-row"><span>点数</span><b id="ro-count">—</b></div>
+    <div class="ro-row"><span>当前布局</span><b id="ro-layout">PCA</b></div>
+    <div class="ro-row"><span>平均可信度 (Trustworthiness)</span><b id="ro-trust">—</b></div>
+    <div class="ro-row" id="ro-focus-wrap" hidden><span id="ro-focus-name">聚类</span><b id="ro-focus">—</b></div>
+  </div>
+
+  <div id="loading">正在点亮星系…</div>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>

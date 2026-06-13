@@ -1,0 +1,6 @@
+# 实时后端依赖
+# 只想跑 mock 模式（骨架演示）：只需 flask。
+flask>=3.0
+
+# real 模式（现场现跑 GPT-2）还需要 pipeline 的依赖：
+#   pip install -r ../pipeline/requirements.txt
