@@ -11,6 +11,9 @@ venv/
 # projector.joblib：UMAP 模型(~84MB，含训练数据)，太大不入库；跑 export 本地再生供实时后端
 web/data/projector.joblib
 
+# API 凭据（绝不入库）：真实 key 放 server/secrets.json，仓库只留 secrets.example.json 模板
+server/secrets.json
+
 # 系统
 .DS_Store
 Thumbs.db

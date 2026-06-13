@@ -1,35 +1,36 @@
-# 词义星海 · 看模型怎么分辨一词多义 (Latent Word-Sense Galaxy)
+# 代码词义星海 · 看模型怎么分辨代码里的一词多义
 
-> 给一句话，看 GPT-2 把同一个词按上下文放进不同的意思区。`bank` 在「河岸」和「银行」两句里，会落到星海的两片区域。
+> 贴一段代码，看模型按上下文区分同一个符号的不同含义（`key` 是字典键还是密钥），并让 Agent 判读某个符号在此处的含义与依据。
 
-信息技术前沿创新课程项目。方向：大模型可解释性的可视化。前端纯静态、本地 vendored Three.js，不连任何 CDN 或接口，断网可演示。
+信息技术前沿创新课程项目。方向：大模型可解释性与编码 Agent 的可视化。用 ECNU 平台 API：`ecnu-embedding-small`（BGE-M3）做向量，`ecnu-max` 做 Agent 判读；前端 Three.js 星海。不依赖本地大模型。
 
 ---
 
-## 文档
-
-- [讲解文档](docs/讲解文档.md)：做了什么、为什么这么做、现场看什么。
-- [项目说明](docs/项目说明.md)：怎么设计、选型理由、怎么跑、目录与数据格式。
-- [概念入门](docs/概念入门.md)：词向量、上下文向量、一词多义的最小背景，含汇报备稿。
-
 ## 快速开始
 
-```bash
-pip install -r server/requirements.txt   # 装了 pipeline 的依赖才有 real 模式（现跑 GPT-2）
-python server/app.py                      # 浏览器开 http://127.0.0.1:5000
-```
-
-从 5000 端口打开，输入一句话或选多义词案例。重建底图数据、目录结构、数据格式等更多内容见[项目说明](docs/项目说明.md)。
+1. 复制 `server/secrets.example.json` 为 `server/secrets.json`，填 ECNU 的 `base_url` 和 `api_key`（已 gitignore，不会上传）。
+2. 装依赖：`pip install flask scikit-learn umap-learn joblib numpy`。
+3. 启动：`python server/app.py`，浏览器开 http://127.0.0.1:5000。
 
 ## 现场看什么
 
-1. 开场是一片发光星海，五千个常见词按模型内部的关系铺开。
-2. 选多义词案例 `bank`，星海里标出它两个义项的落点，金融的一边和河岸的一边分得很开。
-3. 输入「I sat by the river bank」，每个词成为探针星落进星海，`bank` 的最近邻是 bridge、forest、water。
-4. 换成「money in the bank」，同一个 `bank` 落到另一片区域，最近邻变成 banks、loan、fund。
+1. **贴代码 → 投进星海**：每个标识符按所在代码行用 bge 编码、投到星海。同一个符号在不同上下文落到不同区，鼠标移上去看它此处的最近邻。
+2. **多义符号案例**（key / token / class / port / stream / pool）：星海里标出两个义项的落点和各自最近邻。
+3. **Agent 判读**：填一个符号，`ecnu-max` 判断它在这段代码里的含义、依据哪些行、置信多少。
 
-## 一句话原理
+## 重建底图数据
 
-静态词向量里一个词只有一个坐标，分不出多义；把整句话喂进 GPT-2 取**第 9 层上下文向量**就能分开（实测义项判别准确率 0.90，远高于静态层的 0.69）。把这些向量降到 3 维渲染成星海，输入句子的词投进去就是探针星。
+```bash
+python pipeline/export_code_galaxy.py   # 调 bge 编码代码语料 → galaxy.json + projector.joblib
+```
 
-> 这是课程 demo，重点在研究故事和演示，非生产级。
+## 文档
+
+- [调研结果-Agent代码一词多义](docs/调研结果-Agent代码一词多义.md)、[需求清单-Agent代码一词多义](docs/需求清单-Agent代码一词多义.md)：本方向的调研与改造清单。
+- `docs/讲解文档.md`、`docs/项目说明.md`、`docs/概念入门.md`：早期「自然语言词义星海（GPT-2）」版本的讲稿，方向已转代码版，内容待更新。
+
+## 方向演进
+
+早期用 GPT-2 词向量做自然语言的「词义星海」，后转向「代码一词多义 + 编码 Agent」，改用 ECNU API（bge + ecnu-max），不再依赖本地模型。
+
+> 课程 demo，重点在研究故事与演示，非生产级。

@@ -11,7 +11,6 @@ import { loadGalaxyRaw, normalizeGalaxy } from './data.js';
 import { Galaxy } from './galaxy.js';
 import { World, BLOOM_LAYER } from './world.js';
 import { setupUI } from './ui.js';
-import { setupInsight } from './insight.js';
 
 const GALAXY_SCALE = 2.6;
 
@@ -145,7 +144,6 @@ const probeLayer = document.getElementById('probe-labels');
 const _ppv = new THREE.Vector3();
 let probeWords = [];
 let probeLabels = [];
-let insightApi = null;
 
 // 用一份(原始 schema)数据重建整个星系：dispose 旧的 → 建新的，保留当前视图状态。
 function applyGalaxyObj(raw) {
@@ -212,13 +210,21 @@ const ctx = {
     renderProbe(words, { trail: true });
     return { count: words.length, mode: out.mode };
   },
+  // 路径②：让 ecnu-max 判读某符号在这段代码里的含义 + 依据 + 置信
+  agent: async (code, symbol) => {
+    const res = await fetch('/api/agent', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: code, symbol }),
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok || out.error) throw new Error(out.error || ('HTTP ' + res.status));
+    return out.result;
+  },
 };
 
 (async () => {
   try {
     applyGalaxyObj(await loadGalaxyRaw());
     uiApi = setupUI(ctx);
-    insightApi = setupInsight();
     controls.update();
     homeState = captureState();        // 锚定全景机位，供"返回总览/ESC"平滑飞回
     setMode('自由观察');
@@ -420,7 +426,6 @@ function clearProbe() {
   probeWords = []; probeLabels = [];
   if (probeLayer) probeLayer.innerHTML = '';
   if (galaxy) galaxy.clearProbe();
-  if (insightApi) insightApi.hide();
 }
 // B：把一个落点投影到「义项 0 → 义项 1」轴上，得到 0~1 的倾向；D：偏离中点的程度=置信。
 function senseAxisProj(pt, c) {
@@ -488,5 +493,4 @@ function showCase(c) {
     c.senses.map((s, i) => `<div class="dv" style="color:${i ? '#7fd0ff' : '#ffb066'}">▶ ${escHtml(s.name)}<br><span style="color:var(--txt-dim)">${escHtml(s.example)}</span></div>`).join('') +
     `<div class="row"><button id="sel-close" class="seg">✕ 清除(Esc)</button></div>`;
   const b = document.getElementById('sel-close'); if (b) b.onclick = () => { clearProbe(); selcard.hidden = true; };
-  if (insightApi) insightApi.showCase(c);   // A：逐层可分度曲线
 }

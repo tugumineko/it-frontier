@@ -227,15 +227,10 @@ textarea { margin-bottom: 8px; }
 /* 探针信息卡里的最近邻词 */
 #selcard .nb { font-size: 12px; color: #ffd36b; margin: 4px 0 8px; line-height: 1.5; max-width: 240px; }
 
-/* A：逐层义项可分度 HUD */
-#insight {
-  position: fixed; right: 18px; bottom: 18px; z-index: 13; width: 264px;
-  background: var(--panel); border: 1px solid var(--panel-border);
-  border-radius: 12px; padding: 10px 12px; backdrop-filter: blur(10px);
-}
-.ins-title { font-size: 12px; font-weight: 600; color: var(--txt-dim); letter-spacing: .5px; margin-bottom: 6px; }
-#sep-curve { width: 100%; display: block; background: rgba(0,0,0,0.25); border-radius: 6px; }
-.ins-readout { font-size: 11px; color: var(--txt); margin: 6px 0; }
-.ins-readout b { color: #ffd36b; }
-#layer-slider { width: 100%; accent-color: var(--accent); }
-.ins-cap { font-size: 10px; color: var(--txt-dim); line-height: 1.4; margin-top: 4px; }
+/* Agent 判读面板 + 符号输入 */
+#agent-symbol { width: 100%; padding: 7px 9px; font-size: 13px; color: var(--txt); background: rgba(255,255,255,0.05); border: 1px solid var(--panel-border); border-radius: 8px; font-family: inherit; }
+#agent-result { margin-top: 8px; }
+.ag-sense { font-size: 13px; color: #fff; background: rgba(91,140,255,0.15); border: 1px solid var(--panel-border); border-radius: 8px; padding: 8px 10px; line-height: 1.5; }
+.ag-conf { color: #ffd36b; font-size: 12px; }
+.ag-ev-title { font-size: 11px; color: var(--txt-dim); margin: 8px 0 4px; }
+.ev { font-family: ui-monospace, Consolas, monospace; font-size: 11px; color: #bcd; background: rgba(0,0,0,0.3); border-radius: 5px; padding: 4px 7px; margin-bottom: 4px; white-space: pre-wrap; word-break: break-all; }

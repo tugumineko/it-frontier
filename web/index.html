@@ -3,13 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>词义星海 · 看模型怎么分辨一词多义</title>
+  <title>代码词义星海 · 看模型怎么分辨代码里的一词多义</title>
   <link rel="icon" href="data:," />
   <link rel="stylesheet" href="./css/style.css" />
-  <!--
-    依赖说明：Three.js 完整 vendoring 到 ./vendor/three/，不依赖任何 CDN。
-    现场断网也能跑（满足无 API / 离线硬约束）。
-  -->
   <script type="importmap">
   {
     "imports": {
@@ -20,31 +16,36 @@
   </script>
 </head>
 <body>
-  <!-- 3D 画布挂载点 -->
   <div id="app"></div>
 
-  <!-- 顶部标题与一句话立意 -->
   <header id="topbar">
-    <div class="title">词义星海 <span class="sub">· 看模型怎么分辨一词多义</span></div>
-    <div class="tagline">给一句话，看 GPT-2 把同一个词，按上下文放进<b>不同的意思区</b>。</div>
+    <div class="title">代码词义星海 <span class="sub">· 一词多义</span></div>
+    <div class="tagline">贴一段代码，看模型按上下文区分同一个符号的<b>不同含义</b>（如 key 是字典键还是密钥）。</div>
   </header>
 
-  <!-- 右侧控制面板 -->
   <aside id="panel">
     <section class="grp">
-      <h3>输入一句话</h3>
-      <textarea id="sentence-input" rows="2" placeholder="例如：I sat by the river bank watching the water"></textarea>
-      <button id="btn-locate" class="primary">▶ 投进星海</button>
+      <h3>贴一段代码</h3>
+      <textarea id="sentence-input" rows="3" placeholder="例如：&#10;value = config[key]&#10;cipher = aes.encrypt(data, key)"></textarea>
+      <button id="btn-locate" class="primary">▶ 投进星海（bge 向量）</button>
       <button id="btn-clear" class="seg" style="width:100%;margin-top:8px">✕ 清除探针</button>
-      <div class="hint" id="locate-status">现跑 GPT-2 取每个词的上下文向量，投到星海里并标出最近邻。需运行 server/app.py 并从 http://127.0.0.1:5000 打开。</div>
+      <div class="hint" id="locate-status">用 ECNU bge 把每个标识符按所在代码行编码、投到星海并标出最近邻。需从 http://127.0.0.1:5000 打开。</div>
     </section>
 
     <section class="grp">
-      <h3>多义词案例</h3>
+      <h3>Agent 判读（ecnu-max）</h3>
+      <input id="agent-symbol" type="text" placeholder="要判读的符号，如 key" />
+      <button id="btn-agent" class="primary" style="margin-top:8px">🤖 让 agent 判读</button>
+      <div class="hint" id="agent-status">用上方代码 + 这个符号，让 ecnu-max 判断它在此处的含义、依据哪些行、置信多少。</div>
+      <div id="agent-result" hidden></div>
+    </section>
+
+    <section class="grp">
+      <h3>多义符号案例</h3>
       <select id="case-select">
-        <option value="-1">— 选一个多义词 —</option>
+        <option value="-1">— 选一个多义符号 —</option>
       </select>
-      <div class="hint">选一个词，星海里标出它<b>两个义项</b>的落点，看它们分得多开。</div>
+      <div class="hint">选一个符号，星海里标出它<b>两个义项</b>的落点和各自最近邻。</div>
     </section>
 
     <section class="grp">
@@ -62,39 +63,21 @@
     </section>
   </aside>
 
-  <!-- 左下角读数面板 -->
   <div id="readout">
-    <div class="ro-row"><span>底图词数</span><b id="ro-count">—</b></div>
-    <div class="ro-row"><span>表示</span><b>第 9 层上下文向量</b></div>
+    <div class="ro-row"><span>底图片段</span><b id="ro-count">—</b></div>
+    <div class="ro-row"><span>向量</span><b>ECNU bge · 1024 维</b></div>
   </div>
 
-  <!-- 探针文字标签层（输入句子 / 案例义项的词，浮在星点上）-->
   <div id="probe-labels"></div>
-
-  <!-- hover 词卡（屏幕投影拾取，单实例复用）-->
   <div id="tooltip" hidden></div>
-
-  <!-- 顶部模式指示 -->
   <div id="mode"><span>自由观察</span></div>
-
-  <!-- 选中词卡 / 探针信息卡 -->
   <div id="selcard" hidden></div>
 
-  <!-- 底部操作提示条 -->
   <div id="hintbar">
     <span>拖拽 = 旋转</span><span>滚轮 = 缩放</span><span>右键 = 平移</span>
-    <span>单击 = 看词</span><span>双击 = 飞入</span><span>ESC = 复位</span>
+    <span>单击 = 看符号</span><span>双击 = 飞入</span><span>ESC = 复位</span>
   </div>
   <button id="hint-toggle" title="操作提示">?</button>
-
-  <!-- A：逐层义项可分度曲线 HUD（拖层滑块看义项随层分开 / 塌缩）-->
-  <div id="insight" hidden>
-    <div class="ins-title" id="insight-title">逐层义项可分度</div>
-    <canvas id="sep-curve" width="240" height="104"></canvas>
-    <div class="ins-readout" id="sep-readout"></div>
-    <input id="layer-slider" type="range" min="0" max="12" step="1" value="9" />
-    <div class="ins-cap">第 0 层接近静态词向量、义项几乎重合；中间层分得最开；顶层偏向预测下一个词，又塌回去。</div>
-  </div>
 
   <div id="loading">正在点亮星系…</div>
 

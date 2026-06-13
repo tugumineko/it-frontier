@@ -27,12 +27,12 @@ export function setupUI(ctx) {
   const run = async () => {
     const text = input.value.trim();
     if (!text) return;
-    status.textContent = '正在用 GPT-2 取每个词的上下文向量…';
+    status.textContent = '正在用 bge 编码代码标识符…';
     try {
       const r = await ctx.locate(text);
       status.textContent = r.mode === 'real'
-        ? `已把 ${r.count} 个词投进星海。把鼠标移到词上看它在此处的最近邻。`
-        : `mock 模式（未接 GPT-2）：${r.count} 个词散点占位，仅供链路演示。`;
+        ? `已把 ${r.count} 个标识符投进星海。鼠标移到符号上看它在此处的最近邻。`
+        : `mock 模式（未接 bge）：${r.count} 个符号散点占位。`;
     } catch (e) {
       status.innerHTML = '⚠ 未连接后端。请运行 <code>server/app.py</code> 并从 <b>http://127.0.0.1:5000</b> 打开本页。';
     }
@@ -43,6 +43,30 @@ export function setupUI(ctx) {
     ctx.clearProbe();
     sel.value = '-1';
     status.textContent = '已清除探针。';
+  };
+
+  // ---- Agent 判读（ecnu-max）：用上方代码 + 一个符号，让模型判断含义与依据 ----
+  const agentSymbol = document.getElementById('agent-symbol');
+  const agentStatus = document.getElementById('agent-status');
+  const agentResult = document.getElementById('agent-result');
+  document.getElementById('btn-agent').onclick = async () => {
+    const code = input.value.trim();
+    const sym = agentSymbol.value.trim();
+    if (!code || !sym) { agentStatus.textContent = '请先在上方贴代码，并填要判读的符号。'; return; }
+    agentStatus.textContent = `正在让 ecnu-max 判读 “${sym}” …`;
+    agentResult.hidden = true;
+    try {
+      const r = await ctx.agent(code, sym);
+      agentStatus.textContent = '判读完成：';
+      const conf = (r.confidence != null) ? `　置信 ${Math.round(r.confidence * 100)}%` : '';
+      const ev = (r.evidence || []).map((e) => `<div class="ev">${esc(e)}</div>`).join('');
+      agentResult.hidden = false;
+      agentResult.innerHTML = `<div class="ag-sense">${esc(r.sense || '—')}<span class="ag-conf">${conf}</span></div>` +
+        (ev ? `<div class="ag-ev-title">依据行</div>${ev}` : '');
+    } catch (e) {
+      agentStatus.innerHTML = '⚠ 判读失败（需后端 + ECNU 凭据）：' + esc(String(e.message || e));
+      agentResult.hidden = true;
+    }
   };
 
   // ---- 展示：聚焦星海 / 背景强度 / 辉光 / 词星大小 ----
@@ -68,4 +92,8 @@ export function setupUI(ctx) {
   }
   refresh();
   return { refresh };
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 }
