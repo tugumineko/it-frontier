@@ -225,11 +225,19 @@ renderer.domElement.addEventListener('pointermove', (e) => {
 });
 renderer.domElement.addEventListener('pointerleave', () => { tooltip.hidden = true; });
 
+// 区分"拖拽旋转"与"点击选择"：记录按下位置，松开时位移过大=拖拽，不当点击。
+let _downX = 0, _downY = 0, _downT = 0;
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  _downX = e.clientX; _downY = e.clientY; _downT = performance.now();
+});
 renderer.domElement.addEventListener('click', (e) => {
+  // 旋转(拖拽) / 长按 都不触发聚焦，避免"转视角却被强行聚焦"
+  if (Math.hypot(e.clientX - _downX, e.clientY - _downY) > 6) return;
+  if (performance.now() - _downT > 500) return;
   const i = pickAt(e.clientX, e.clientY);
   if (i < 0) return;
   focusedPoint = i;
   focusTarget = { pos: wordWorldPos(i).clone(), dist: 55 };
-  controls.autoRotate = false;
   galaxy.setHighlight(galaxy.data.cluster[i]);   // 高亮同簇，压暗其余(focus+context)
 });
