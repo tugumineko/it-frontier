@@ -144,9 +144,9 @@ const LINK_FRAG = /* glsl */`
   uniform float uOpacity;
   varying float vDist;
   varying float vAlpha;
-  ${LIE_COLOR_GLSL}
+  ${COLORMAP_GLSL}
   void main() {
-    gl_FragColor = vec4(lieColor(vDist) * 1.2, uOpacity * vAlpha * (0.25 + 0.6 * vDist));
+    gl_FragColor = vec4(turbo(vDist) * 1.2, uOpacity * vAlpha * (0.25 + 0.6 * vDist));
   }
 `;
 
