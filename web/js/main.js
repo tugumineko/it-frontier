@@ -21,8 +21,8 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'hi
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setClearColor(0x02030a, 1);
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMapping = THREE.ReinhardToneMapping;   // r160 选择性 bloom 官方用值，避免过曝
+renderer.toneMappingExposure = 1.0;
 app.appendChild(renderer.domElement);
 
 // ---- 场景 / 相机 ----
@@ -43,13 +43,15 @@ controls.autoRotateSpeed = 0.22;
 const world = new World(scene);
 
 // ---- Bloom + Vignette 后处理 ----
-const composer = new EffectComposer(renderer);
+// 用 HalfFloat 渲染目标承载 >1 的 HDR 值（否则被 clamp，bloom 阈值失效）。
+const rt = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, { type: THREE.HalfFloatType });
+const composer = new EffectComposer(renderer, rt);
 composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(
   new THREE.Vector2(window.innerWidth, window.innerHeight),
-  0.9,    // strength
-  0.6,    // radius
-  0.20    // threshold（让星点/亮丝发光，星云底不过曝）
+  0.4,    // strength（Step1 止血：从 0.9 降到 0.4）
+  0.4,    // radius
+  0.8     // threshold（从 0.2 抬到 0.8：只让最亮的星核发光，背景/星云不过曝洗白）
 );
 composer.addPass(bloom);
 const vignette = new ShaderPass(VignetteShader);
