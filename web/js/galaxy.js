@@ -302,6 +302,47 @@ export class Galaxy {
   }
   clearProbe() { this.liveGroup.clear(); this._probe = []; }
 
+  // 着色切换：'sense'=按 agent 判出的义项色，'symbol'=按符号名色（同名同色）。
+  setColorBy(mode) {
+    this._colorBy = mode;
+    const src = (mode === 'symbol') ? this.data.symbolColor : this.data.clusterColor;
+    if (!src) return;
+    const attr = this.points.geometry.getAttribute('aClusterColor');
+    attr.array.set(src); attr.needsUpdate = true;
+  }
+
+  // 选中一个 occurrence：在 liveGroup 里高亮它和它的最近邻，并连线（不进 bloom，避免洗白）。
+  highlightNeighbors(centerIdx, neighborIdxs) {
+    this.liveGroup.clear();
+    if (centerIdx == null || centerIdx < 0) return;
+    const key = this._morph > 0.5 ? this.data.umap : this.data.pca;
+    const ids = [centerIdx, ...(neighborIdxs || [])];
+    const pos = new Float32Array(ids.length * 3), col = new Float32Array(ids.length * 3);
+    ids.forEach((id, k) => {
+      pos[k*3] = key[id*3]; pos[k*3+1] = key[id*3+1]; pos[k*3+2] = key[id*3+2];
+      const c = k === 0 ? [1.0, 0.95, 0.55] : [0.6, 0.85, 1.0];
+      col[k*3] = c[0]; col[k*3+1] = c[1]; col[k*3+2] = c[2];
+    });
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    this.liveGroup.add(new THREE.Points(g, new THREE.PointsMaterial({
+      size: 20, sizeAttenuation: true, vertexColors: true, map: this._probeSprite(),
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending })));
+    const nb = neighborIdxs || [];
+    if (nb.length) {
+      const lp = new Float32Array(nb.length * 2 * 3);
+      nb.forEach((id, k) => {
+        lp[k*6] = key[centerIdx*3]; lp[k*6+1] = key[centerIdx*3+1]; lp[k*6+2] = key[centerIdx*3+2];
+        lp[k*6+3] = key[id*3]; lp[k*6+4] = key[id*3+1]; lp[k*6+5] = key[id*3+2];
+      });
+      const lg = new THREE.BufferGeometry();
+      lg.setAttribute('position', new THREE.BufferAttribute(lp, 3));
+      this.liveGroup.add(new THREE.LineSegments(lg, new THREE.LineBasicMaterial({
+        color: 0x88bbff, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending })));
+    }
+  }
+
   update(dt) {
     this._time += dt;
     this.uniforms.uTime.value = this._time;

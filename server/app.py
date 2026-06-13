@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-app.py —— 代码词义星海后端：托管前端 + /api/locate（bge 投影）+ /api/agent（ecnu-max 判读）。
+app.py —— 代码符号语义探索器后端：托管前端 + /api/analyze（一次出齐联动所需的整份分析）。
 
-embedding 用 ECNU bge（ecnu-embedding-small），agent 判读用 ecnu-max，都走 ECNU 的 OpenAI 兼容 API。
-凭据从 server/secrets.json 读（已 gitignore）。本地只做降维投影（投影器在 projector.joblib），无需 torch。
+/api/analyze(POST {code}) 做的事：
+  1. 抽取代码里每个标识符的「每一次出现」(occurrence)，各取 ±2 行上下文窗口。
+  2. 用 ECNU bge 把每个 occurrence 的「符号 + 窗口」编码成向量（同名符号的不同出现 → 不同向量）。
+  3. 对本次所有 occurrence 当场 fit PCA / UMAP 到 3 维（不依赖任何预设底图、不持久化投影器）。
+  4. 对出现 ≥2 次的「多义候选符号」，一次调 ecnu-max 判读每处的义项 / 依据 / 置信。
+  5. 按义项归类着色、算 occurrence 内最近邻，组装成 galaxy 超集 JSON 返回。
 
-启动：
-    python server/app.py        # 浏览器开 http://127.0.0.1:5000
+凭据从 server/secrets.json 读（已 gitignore）。本地用 sklearn/umap 当场降维，无需 torch。
 """
 
-import os, json, re, sys, urllib.request
+import os, json, re, sys, urllib.request, colorsys
+from collections import defaultdict
 from flask import Flask, request, jsonify, send_from_directory
 
 try:
@@ -25,10 +29,12 @@ DATA = os.path.join(WEB, "data")
 app = Flask(__name__, static_folder=None)
 REAL = None
 
-# 抽代码标识符时跳过控制流关键字（class 保留，它是多义案例符号）。
-STOP = set("if else elif for while return def import from in and or not is None True False "
-           "pass break continue with as try except finally lambda yield global del print self".split())
+STOP = set("if else elif for while return def import from in and or not is None True False pass break "
+           "continue with as try except finally lambda yield global del print self int str float bool "
+           "len range list dict set tuple type new var let const function void public private static this "
+           "null true false void".split())
 IDENT = re.compile(r"[A-Za-z_]\w*")
+SINGLE = "（单次出现）"
 
 
 def load_secrets():
@@ -43,158 +49,149 @@ def load_secrets():
 
 
 def try_load_real():
-    bundle = os.path.join(DATA, "projector.joblib")
-    if not os.path.exists(bundle):
-        return None
     try:
-        import joblib, numpy as np
+        import numpy as np
+        import sklearn, umap  # noqa: F401  仅确认可用
         sec = load_secrets()
         if not sec.get("api_key") or not sec.get("base_url"):
-            print("· 缺少 API 凭据（server/secrets.json），回退 mock")
+            print("· 缺少 API 凭据（server/secrets.json），/api/analyze 不可用")
             return None
-        b = joblib.load(bundle)
-        print(f"✓ real 模式：bge 投影器已加载（底图 {len(b['base_tokens'])} 片段，embedding={sec.get('embedding_model')}）")
-        return {"np": np, "b": b, "sec": sec}
+        print(f"✓ real 模式：当场 fit 投影 + ECNU（bge={sec.get('embedding_model')}, chat={sec.get('chat_model')}）")
+        return {"np": np, "sec": sec}
     except Exception as e:
-        print(f"· real 模式不可用（{e.__class__.__name__}: {e}），回退 mock")
+        print(f"· real 不可用（{e.__class__.__name__}: {e}）")
         return None
 
 
 def _post(path, payload, timeout=60):
     sec = REAL["sec"]
-    url = sec["base_url"].rstrip("/") + path
-    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), method="POST",
+    req = urllib.request.Request(sec["base_url"].rstrip("/") + path,
+                                 data=json.dumps(payload).encode("utf-8"), method="POST",
                                  headers={"Authorization": "Bearer " + sec["api_key"], "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
 
 
-def _embed(texts):
+def _embed(texts, batch=16):
     np = REAL["np"]
-    data = sorted(_post("/embeddings", {"model": REAL["sec"]["embedding_model"], "input": texts})["data"],
-                  key=lambda x: x["index"])
-    X = np.array([d["embedding"] for d in data], dtype=np.float32)
+    out = []
+    for i in range(0, len(texts), batch):
+        data = sorted(_post("/embeddings", {"model": REAL["sec"]["embedding_model"], "input": texts[i:i + batch]})["data"],
+                      key=lambda x: x["index"])
+        out.extend(d["embedding"] for d in data)
+    X = np.array(out, dtype=np.float32)
     return X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-8)
 
 
-def _apply_norm(X, p):
+def _norm_layout(P, scale=60.0):
     np = REAL["np"]
-    X = np.asarray(X, dtype=np.float32) - np.asarray(p["center"], dtype=np.float32)
-    return (X / p["r"]) * p["scale"]
+    P = np.asarray(P, dtype=np.float32)
+    P = P - P.mean(0)
+    r = float(np.percentile(np.linalg.norm(P, axis=1), 98)) or 1.0
+    return (P / r) * scale
 
 
-def locate_real(text):
-    """输入一段代码：抽每个标识符，用它所在的行做 bge 向量，投到星海并查最近邻。"""
-    b = REAL["b"]
-    items = []
-    for line in text.split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-        for m in IDENT.finditer(line):
-            w = m.group()
-            if w in STOP or len(w) < 2 or w.isdigit():
-                continue
-            items.append((w, line))
-    if not items:
-        return []
-    uniq = list(dict.fromkeys(l for _, l in items))
-    vecs = _embed(uniq)
-    line2vec = {l: vecs[i] for i, l in enumerate(uniq)}
-    out, seen = [], set()
-    for w, line in items:
-        if (w, line) in seen:
-            continue
-        seen.add((w, line))
-        v = line2vec[line].reshape(1, -1)
-        xyz = _apply_norm(b["pca"].transform(v), b["pca_norm"])[0]
-        uvw = _apply_norm(b["umap"].transform(v), b["umap_norm"])[0]
-        _, idx = b["nn"].kneighbors(v, n_neighbors=min(8, len(b["base_tokens"])))
-        nbs, s2 = [], set()
-        for i in idx[0]:
-            t = b["base_tokens"][i]
-            if t.lower() != w.lower() and t.lower() not in s2:
-                s2.add(t.lower()); nbs.append(t)
-            if len(nbs) >= 6:
-                break
-        out.append({"word": w, "pca": [round(float(t), 2) for t in xyz],
-                    "umap": [round(float(t), 2) for t in uvw], "neighbors": nbs})
-    return out
-
-
-def agent_judge(code, symbol):
-    """让 ecnu-max 判读符号在代码里的含义，并指出依据的代码行。"""
-    prompt = (f"下面是一段代码。判断标识符 `{symbol}` 在这段代码里的含义（属于哪种用法/义项），"
-              f"并指出你依据了哪些行。\n\n代码：\n{code}\n\n"
-              f"只输出 JSON，不要多余文字：{{\"sense\": \"一句话说明该符号此处的含义\", "
-              f"\"evidence\": [\"作为依据的代码行原文\"], \"confidence\": 0到1之间的数}}")
+def agent_analyze(code, multi):
+    """一次调 ecnu-max 判读所有多义候选符号的每处出现。返回 {(symbol,line): {sense,evidence,confidence}}。"""
+    lines = code.split("\n")
+    numbered = "\n".join(f"{i + 1}: {l}" for i, l in enumerate(lines))
+    syms = "；".join(f'{s}(第 {",".join(str(o["line"]) for o in v)} 行)' for s, v in multi.items())
+    prompt = (f"下面是带行号的代码。这些标识符各出现多次：{syms}。\n"
+              f"对每个标识符的每一次出现，判断它在那一处的含义（义项，用简短中文词，如「字典键」「加密密钥」「线程池」），"
+              f"给出依据行原文和置信(0~1)。\n\n代码：\n{numbered}\n\n"
+              f"只输出 JSON，不要多余文字：{{\"items\":[{{\"symbol\":\"key\",\"line\":3,\"sense\":\"字典键\","
+              f"\"evidence\":[\"value = config[key]\"],\"confidence\":0.9}}]}}")
     content = _post("/chat/completions",
                     {"model": REAL["sec"]["chat_model"], "messages": [{"role": "user", "content": prompt}]},
-                    timeout=90)["choices"][0]["message"]["content"]
-    m = re.search(r"\{.*\}", content, re.S)   # 容错：可能裹在 markdown 里
+                    timeout=120)["choices"][0]["message"]["content"]
+    m = re.search(r"\{.*\}", content, re.S)
     try:
-        return json.loads(m.group() if m else content)
+        items = json.loads(m.group())["items"]
+        return {(it["symbol"], int(it["line"])): it for it in items}
     except Exception:
-        return {"sense": content.strip()[:300], "evidence": [], "confidence": None}
+        return {}
 
 
-# ---------- mock（无凭据/投影器时占位）----------
-_MOCK = None
+def analyze(code):
+    np = REAL["np"]
+    lines = code.split("\n")
+    occs = []
+    for li, line in enumerate(lines):
+        for mt in IDENT.finditer(line):
+            w = mt.group()
+            if w in STOP or len(w) < 2 or w.isdigit():
+                continue
+            occs.append({"id": len(occs), "symbol": w, "line": li + 1, "col": mt.start(),
+                         "context": line.strip(),
+                         "window": "\n".join(lines[max(0, li - 2):li + 3])})
+    if not occs:
+        return {"error": "没有可分析的标识符"}
+
+    X = _embed([f'{o["symbol"]} in:\n{o["window"]}' for o in occs])
+
+    from sklearn.decomposition import PCA
+    from sklearn.neighbors import NearestNeighbors
+    pca3 = _norm_layout(PCA(n_components=3, random_state=42).fit_transform(X))
+    if len(occs) >= 5:
+        import umap
+        nb = min(15, max(2, len(occs) // 4))
+        umap3 = _norm_layout(umap.UMAP(n_components=3, n_neighbors=nb, min_dist=0.15,
+                                       metric="cosine", random_state=42).fit_transform(X))
+    else:
+        umap3 = pca3.copy()
+    nn = NearestNeighbors(n_neighbors=min(7, len(occs)), metric="cosine").fit(X)
+    nbidx = nn.kneighbors(X, return_distance=False)
+
+    bysym = defaultdict(list)
+    for o in occs:
+        bysym[o["symbol"]].append(o)
+    multi = {s: v for s, v in bysym.items() if len(v) >= 2}
+    senses = agent_analyze(code, multi) if multi else {}
+
+    clusters, sid = [], {}
+    def sense_id(name):
+        if name not in sid:
+            sid[name] = len(clusters)
+            clusters.append({"id": len(clusters), "name": name})
+        return sid[name]
+
+    for o in occs:
+        info = senses.get((o["symbol"], o["line"]))
+        o["sense"] = info.get("sense", "?") if info else SINGLE
+        o["evidence"] = info.get("evidence", []) if info else []
+        o["confidence"] = info.get("confidence") if info else None
+        o["senseId"] = sense_id(o["sense"])
+        o["neighbors"] = [int(j) for j in nbidx[o["id"]] if int(j) != o["id"]][:6]
+
+    K = max(1, len(clusters))
+    for c in clusters:
+        c["color"] = [0.5, 0.55, 0.66] if c["name"] == SINGLE else list(colorsys.hsv_to_rgb(c["id"] / K, 0.62, 1.0))
+
+    return {
+        "schema": "code-galaxy/v1",
+        "meta": {"source": "ecnu:bge+ecnu-max", "code": code, "count": len(occs), "clusters": clusters,
+                 "symbols": [{"name": s, "occ": [o["id"] for o in v], "multi": len(v) >= 2} for s, v in bysym.items()],
+                 "notes": "occurrence 级 bge 向量；着色=ecnu-max 判出的义项"},
+        "tokens": [o["symbol"] for o in occs],
+        "cluster": [o["senseId"] for o in occs],
+        "pca": [[round(float(v), 2) for v in p] for p in pca3],
+        "umap": [[round(float(v), 2) for v in p] for p in umap3],
+        "size": [0.6] * len(occs),
+        "occ": [{"id": o["id"], "symbol": o["symbol"], "line": o["line"], "col": o["col"], "context": o["context"],
+                 "senseId": o["senseId"], "sense": o["sense"], "evidence": o["evidence"],
+                 "confidence": o["confidence"], "neighbors": o["neighbors"]} for o in occs],
+    }
 
 
-def _mock_base():
-    global _MOCK
-    if _MOCK is None:
-        for name in ("galaxy.json", "galaxy.sample.json"):
-            p = os.path.join(DATA, name)
-            if os.path.exists(p):
-                with open(p, encoding="utf-8") as f:
-                    _MOCK = json.load(f)
-                break
-    return _MOCK
-
-
-def locate_mock(text):
-    import hashlib
-    g = _mock_base()
-    if not g:
-        return []
-    pts = g.get("umap") or g.get("pca")
-    out = []
-    for w in set(re.findall(r"[A-Za-z_]\w+", text)):
-        if w in STOP or len(w) < 2:
-            continue
-        i = int(hashlib.md5(w.encode()).hexdigest(), 16) % len(pts)
-        out.append({"word": w, "pca": pts[i], "umap": pts[i], "neighbors": [g["tokens"][i]]})
-    return out[:40]
-
-
-# ---------- 路由 ----------
-@app.route("/api/locate", methods=["POST"])
-def api_locate():
-    text = (request.get_json(silent=True) or {}).get("text", "").strip()
-    if not text:
-        return jsonify({"words": [], "mode": "empty"})
-    if REAL:
-        try:
-            return jsonify({"words": locate_real(text), "mode": "real"})
-        except Exception as e:
-            import traceback; traceback.print_exc()
-            return jsonify({"error": str(e)}), 500
-    return jsonify({"words": locate_mock(text), "mode": "mock"})
-
-
-@app.route("/api/agent", methods=["POST"])
-def api_agent():
-    body = request.get_json(silent=True) or {}
-    code = (body.get("text") or "").strip()
-    symbol = (body.get("symbol") or "").strip()
-    if not code or not symbol:
-        return jsonify({"error": "需要 text(代码) 和 symbol(目标符号)"}), 400
+@app.route("/api/analyze", methods=["POST"])
+def api_analyze():
+    code = (request.get_json(silent=True) or {}).get("code", "").strip()
+    if not code:
+        return jsonify({"error": "empty"}), 400
     if not REAL:
-        return jsonify({"error": "需要 API 凭据：在 server/secrets.json 配置 ECNU base_url/api_key"}), 503
+        return jsonify({"error": "需要 ECNU 凭据：在 server/secrets.json 配置 base_url/api_key"}), 503
     try:
-        return jsonify({"result": agent_judge(code, symbol), "mode": "real"})
+        return jsonify(analyze(code))
     except Exception as e:
         import traceback; traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -212,6 +209,6 @@ def static_files(p):
 
 if __name__ == "__main__":
     REAL = try_load_real()
-    print(f"模式：{'real（ECNU bge + ecnu-max）' if REAL else 'mock（缺凭据/投影器，散点占位）'}")
+    print(f"模式：{'real（/api/analyze 可用）' if REAL else 'mock（缺凭据/依赖，仅能导入星海数据离线演示）'}")
     print("打开 http://127.0.0.1:5000")
     app.run(host="127.0.0.1", port=5000, debug=False)

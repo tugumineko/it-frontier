@@ -1,6 +1,6 @@
-# 实时后端依赖
-# 只想跑 mock 模式（骨架演示）：只需 flask。
+# 后端依赖：Flask 托管前端 + /api/analyze。
+# 本地只做降维（PCA/UMAP），向量与判读都调 ECNU API，不需要 torch/transformers。
 flask>=3.0
-
-# real 模式（现场现跑 GPT-2）还需要 pipeline 的依赖：
-#   pip install -r ../pipeline/requirements.txt
+numpy
+scikit-learn
+umap-learn

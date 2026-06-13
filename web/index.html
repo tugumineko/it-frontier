@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>代码词义星海 · 看模型怎么分辨代码里的一词多义</title>
+  <title>代码符号语义探索器 · 一词多义</title>
   <link rel="icon" href="data:," />
   <link rel="stylesheet" href="./css/style.css" />
   <script type="importmap">
@@ -19,67 +19,65 @@
   <div id="app"></div>
 
   <header id="topbar">
-    <div class="title">代码词义星海 <span class="sub">· 一词多义</span></div>
-    <div class="tagline">贴一段代码，看模型按上下文区分同一个符号的<b>不同含义</b>（如 key 是字典键还是密钥）。</div>
+    <div class="title">代码符号语义探索器 <span class="sub">· 一词多义</span></div>
+    <div class="tagline">输入代码，让 agent 判断每个符号在每一处的含义，<b>同名异义</b>在星海里分开。</div>
   </header>
 
+  <!-- 左：代码面板（输入 + 分析后可点符号 + 行高亮）-->
+  <aside id="code-panel">
+    <h3>代码</h3>
+    <textarea id="code-input" rows="6" placeholder="在此粘贴一段代码，点「分析」。&#10;同名符号在不同上下文的含义会被 agent 逐个判读。"></textarea>
+    <div class="row">
+      <button id="btn-analyze" class="primary">▶ 分析</button>
+    </div>
+    <div class="hint" id="analyze-status">需运行 server/app.py 并从 http://127.0.0.1:5000 打开。也可直接「导入星海数据」离线查看。</div>
+    <div id="code-view" class="codeview"></div>
+  </aside>
+
+  <!-- 右：控制面板 -->
   <aside id="panel">
     <section class="grp">
-      <h3>贴一段代码</h3>
-      <textarea id="sentence-input" rows="3" placeholder="例如：&#10;value = config[key]&#10;cipher = aes.encrypt(data, key)"></textarea>
-      <button id="btn-locate" class="primary">▶ 投进星海（bge 向量）</button>
-      <button id="btn-clear" class="seg" style="width:100%;margin-top:8px">✕ 清除探针</button>
-      <div class="hint" id="locate-status">用 ECNU bge 把每个标识符按所在代码行编码、投到星海并标出最近邻。需从 http://127.0.0.1:5000 打开。</div>
+      <h3>着色</h3>
+      <div class="row">
+        <button id="color-sense" class="seg active">按义项</button>
+        <button id="color-symbol" class="seg">按符号名</button>
+      </div>
+      <div class="hint">切「按符号名」同名同色像一团，切「按义项」同名按 agent 判读裂成不同色——这就是一词多义。</div>
     </section>
 
     <section class="grp">
-      <h3>Agent 判读（ecnu-max）</h3>
-      <input id="agent-symbol" type="text" placeholder="要判读的符号，如 key" />
-      <button id="btn-agent" class="primary" style="margin-top:8px">🤖 让 agent 判读</button>
-      <div class="hint" id="agent-status">用上方代码 + 这个符号，让 ecnu-max 判断它在此处的含义、依据哪些行、置信多少。</div>
-      <div id="agent-result" hidden></div>
-    </section>
-
-    <section class="grp">
-      <h3>多义符号案例</h3>
-      <select id="case-select">
-        <option value="-1">— 选一个多义符号 —</option>
-      </select>
-      <div class="hint">选一个符号，星海里标出它<b>两个义项</b>的落点和各自最近邻。</div>
+      <h3>星海数据</h3>
+      <div class="row">
+        <button id="btn-export" class="seg">💾 导出</button>
+        <button id="btn-import" class="seg">📂 导入</button>
+      </div>
+      <input id="file-import" type="file" accept="application/json,.json" hidden />
+      <div class="hint">导出当前分析为 JSON；导入可离线回放（无需后端）。</div>
     </section>
 
     <section class="grp">
       <h3>展示</h3>
-      <button id="btn-focus" class="seg" style="width:100%">🎯 聚焦星海（弱化背景）</button>
       <label class="slider-label">背景强度
         <input id="bg-intensity" type="range" min="0" max="1" step="0.02" value="1" />
       </label>
       <label class="slider-label">辉光强度
         <input id="bloom" type="range" min="0" max="2" step="0.05" value="0.75" />
       </label>
-      <label class="slider-label">词星大小
-        <input id="pt-size" type="range" min="0.6" max="4" step="0.1" value="2" />
-      </label>
     </section>
+
+    <div id="readout-mini" class="ro-row"><span>occurrence / 义项</span><b id="ro-count">—</b></div>
   </aside>
 
-  <div id="readout">
-    <div class="ro-row"><span>底图片段</span><b id="ro-count">—</b></div>
-    <div class="ro-row"><span>向量</span><b>ECNU bge · 1024 维</b></div>
-  </div>
-
-  <div id="probe-labels"></div>
   <div id="tooltip" hidden></div>
   <div id="mode"><span>自由观察</span></div>
   <div id="selcard" hidden></div>
 
   <div id="hintbar">
-    <span>拖拽 = 旋转</span><span>滚轮 = 缩放</span><span>右键 = 平移</span>
-    <span>单击 = 看符号</span><span>双击 = 飞入</span><span>ESC = 复位</span>
+    <span>拖拽 = 旋转</span><span>滚轮 = 缩放</span><span>单击符号/星点 = 看判读</span><span>双击 = 飞入</span><span>ESC = 复位</span>
   </div>
   <button id="hint-toggle" title="操作提示">?</button>
 
-  <div id="loading">正在点亮星系…</div>
+  <div id="loading">就绪：粘贴代码，点分析…</div>
 
   <script type="module" src="./js/main.js"></script>
 </body>

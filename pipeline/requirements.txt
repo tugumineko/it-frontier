@@ -1,8 +1,0 @@
-# 构建期管线依赖（在你的 4070 Ti 上跑 export_embeddings.py 时安装）
-# 演示现场不需要这些（前端是纯静态 + vendored Three.js）。
-torch
-transformers
-numpy
-scikit-learn
-umap-learn
-joblib

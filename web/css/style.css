@@ -234,3 +234,36 @@ textarea { margin-bottom: 8px; }
 .ag-conf { color: #ffd36b; font-size: 12px; }
 .ag-ev-title { font-size: 11px; color: var(--txt-dim); margin: 8px 0 4px; }
 .ev { font-family: ui-monospace, Consolas, monospace; font-size: 11px; color: #bcd; background: rgba(0,0,0,0.3); border-radius: 5px; padding: 4px 7px; margin-bottom: 4px; white-space: pre-wrap; word-break: break-all; }
+
+/* ===== 三视图：左代码面板 + 可点符号 + 右下判读卡 ===== */
+#code-panel {
+  position: fixed; left: 18px; top: 86px; bottom: 64px; z-index: 12; width: 380px;
+  display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--panel-border); border-radius: 14px;
+  padding: 12px 14px; backdrop-filter: blur(10px); box-shadow: 0 8px 40px rgba(0,0,0,.5);
+}
+#code-panel h3 { margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--txt-dim); text-transform: uppercase; letter-spacing: 1px; }
+#code-input { width: 100%; font-family: ui-monospace, Consolas, monospace; font-size: 12px; padding: 8px;
+  color: var(--txt); background: rgba(0,0,0,.3); border: 1px solid var(--panel-border); border-radius: 8px; resize: vertical; }
+#code-panel .row { margin: 8px 0; }
+.codeview { flex: 1; overflow: auto; margin-top: 8px; font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px; line-height: 1.55; background: rgba(0,0,0,.28); border-radius: 8px; padding: 6px 0; }
+.codeview .cl { display: flex; padding: 0 8px; }
+.codeview .cl.hot-line { background: rgba(91,140,255,.16); }
+.codeview .ln { flex: 0 0 30px; color: #55607f; text-align: right; padding-right: 10px; user-select: none; }
+.codeview code { color: #cdd6f4; white-space: pre-wrap; word-break: break-word; }
+.codeview .sym { color: var(--sc, #9fb3ff); border-bottom: 1px dotted rgba(159,179,255,.5); cursor: pointer; border-radius: 3px; padding: 0 1px; }
+.codeview .sym:hover { background: rgba(159,179,255,.18); }
+.codeview .sym.hot { background: var(--sc, #5b8cff); color: #0a0e1a; font-weight: 700; border-bottom: none; }
+
+#selcard { top: auto; left: auto; right: 18px; bottom: 64px; transform: none; width: 300px; text-align: left; max-height: 48vh; overflow: auto; }
+#selcard .tk { font-size: 16px; font-weight: 700; color: #fff; }
+#selcard .lntag { font-size: 11px; color: var(--txt-dim); margin-left: 8px; font-weight: 400; }
+#selcard .sense { margin: 6px 0; font-size: 13px; color: var(--txt); }
+#selcard .sense b { color: #ffd36b; }
+#selcard .conf { color: #7fd0ff; font-size: 12px; margin-left: 6px; }
+#selcard .sub { font-size: 11px; color: var(--txt-dim); margin: 8px 0 4px; }
+#selcard .nbs { display: flex; flex-wrap: wrap; gap: 5px; }
+#selcard .nb-i { font-size: 11px; padding: 2px 7px; border-radius: 999px; background: rgba(255,255,255,.06); border: 1px solid var(--panel-border); cursor: pointer; }
+#selcard .nb-i:hover { background: rgba(91,140,255,.25); }
+#readout-mini { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--panel-border); }
