@@ -45,14 +45,16 @@
       <h3>着色 Color</h3>
       <div class="row">
         <button id="btn-cluster" class="seg active">语义聚类</button>
-        <button id="btn-lie" class="seg">失真测谎</button>
+        <button id="btn-lie" class="seg">Turbo</button>
+        <button id="btn-viridis" class="seg">viridis</button>
       </div>
-      <button id="btn-reveal" class="primary">⚡ 一键测谎（切到 UMAP + 烧红）</button>
+      <button id="btn-reveal" class="primary">⚡ 一键测谎（切 UMAP + 全局失真）</button>
       <div class="legend" id="lie-legend" hidden>
-        <span>可信</span>
-        <div class="bar"></div>
+        <span>诚实</span>
+        <canvas id="cmap-legend" width="160" height="10"></canvas>
         <span>编造</span>
       </div>
+      <div class="hint" id="cmap-note" hidden>失真 = UMAP <b>全局距离</b>被编得多假（红/亮黄=越假）。UMAP 局部诚实、全局撒谎。</div>
     </section>
 
     <section class="grp">
@@ -92,7 +94,8 @@
   <div id="readout">
     <div class="ro-row"><span>点数</span><b id="ro-count">—</b></div>
     <div class="ro-row"><span>当前布局</span><b id="ro-layout">PCA</b></div>
-    <div class="ro-row"><span>平均可信度 (Trustworthiness)</span><b id="ro-trust">—</b></div>
+    <div class="ro-row"><span>局部可信度 (保近邻)</span><b id="ro-trust">—</b></div>
+    <div class="ro-row"><span>全局保真 (保距离)</span><b id="ro-global">—</b></div>
     <div class="ro-row" id="ro-focus-wrap" hidden><span id="ro-focus-name">聚类</span><b id="ro-focus">—</b></div>
   </div>
 

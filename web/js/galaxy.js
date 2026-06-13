@@ -10,17 +10,35 @@
 
 import * as THREE from 'three';
 
-// 共用的失真配色函数（蓝→青→黄→红）
-const LIE_COLOR_GLSL = /* glsl */`
-  vec3 lieColor(float d) {
-    vec3 cBlue = vec3(0.16, 0.45, 1.0);
-    vec3 cCyan = vec3(0.10, 0.90, 0.82);
-    vec3 cYellow = vec3(1.0, 0.90, 0.30);
-    vec3 cRed = vec3(1.0, 0.18, 0.22);
-    if (d < 0.33) return mix(cBlue, cCyan, d / 0.33);
-    if (d < 0.66) return mix(cCyan, cYellow, (d - 0.33) / 0.33);
-    return mix(cYellow, cRed, (d - 0.66) / 0.34);
+// 感知均匀配色（标量场/热力的正确选择，禁用 jet/rainbow）。
+//  - Turbo: Google 的 Apache-2.0 数值拟合（saturate→clamp 适配 GLSL ES）。沉浸醒目，红=高失真。
+//  - viridis: BIDS 的 CC0 数值拟合。亮度单调、暗背景发光感、严谨。
+// 二者都是公开的多项式数值近似（算法/常数，非创作内容）。
+const COLORMAP_GLSL = /* glsl */`
+  vec3 turbo(float x){
+    x = clamp(x, 0.0, 1.0);
+    const vec4 kR4 = vec4(0.13572138, 4.61539260, -42.66032258, 132.13108234);
+    const vec4 kG4 = vec4(0.09140261, 2.19418839,   4.84296658, -14.18503333);
+    const vec4 kB4 = vec4(0.10667330,12.64194608, -60.58204836, 110.36276771);
+    const vec2 kR2 = vec2(-152.94239396, 59.28637943);
+    const vec2 kG2 = vec2(   4.27729857,  2.82956604);
+    const vec2 kB2 = vec2( -89.90310912, 27.34824973);
+    vec4 v4 = vec4(1.0, x, x*x, x*x*x);
+    vec2 v2 = v4.zw * v4.z;
+    return clamp(vec3(dot(v4,kR4)+dot(v2,kR2), dot(v4,kG4)+dot(v2,kG2), dot(v4,kB4)+dot(v2,kB2)), 0.0, 1.0);
   }
+  vec3 viridis(float t){ t=clamp(t,0.0,1.0);
+    const vec3 c0=vec3(0.2777273,0.0054073,0.3340998);
+    const vec3 c1=vec3(0.1050930,1.4046135,1.3845902);
+    const vec3 c2=vec3(-0.3308618,0.2148476,0.0950952);
+    const vec3 c3=vec3(-4.6342305,-5.7991010,-19.3324410);
+    const vec3 c4=vec3(6.2282699,14.1799334,56.6905526);
+    const vec3 c5=vec3(4.7763850,-13.7451454,-65.3530326);
+    const vec3 c6=vec3(-5.4354559,4.6458526,26.3124352);
+    return clamp(c0+t*(c1+t*(c2+t*(c3+t*(c4+t*(c5+t*c6))))), 0.0, 1.0);
+  }
+  // 失真配色：uColorMode 0=聚类 1=Turbo 2=viridis
+  vec3 heatColor(float d, float mode){ return mode < 1.5 ? turbo(d) : viridis(d); }
 `;
 
 const VERT = /* glsl */`
@@ -32,7 +50,7 @@ const VERT = /* glsl */`
   attribute float aSize;
 
   uniform float uMorph;
-  uniform float uColorMode;
+  uniform float uColorMode;     // 0=聚类色 1=Turbo热力 2=viridis热力
   uniform float uPointScale;
   uniform float uPixelRatio;
   uniform float uHighlight;
@@ -40,11 +58,10 @@ const VERT = /* glsl */`
 
   varying vec3 vColor;
   varying float vAlpha;
-  varying float vCore;
+  varying float vBoost;
 
-  ${LIE_COLOR_GLSL}
+  ${COLORMAP_GLSL}
 
-  // 廉价 curl 风漂移：让星海有缓慢的生命感（不破坏聚类结构）
   vec3 drift(vec3 p) {
     float t = uTime * 0.25;
     return vec3(
@@ -59,12 +76,15 @@ const VERT = /* glsl */`
     vec4 mv = modelViewMatrix * vec4(pos, 1.0);
     gl_Position = projectionMatrix * mv;
 
-    // 呼吸闪烁
-    float tw = 0.8 + 0.2 * sin(uTime * 1.5 + aCluster * 2.0 + aSize * 30.0);
-    gl_PointSize = aSize * uPointScale * uPixelRatio * tw * (320.0 / -mv.z);
+    float d = clamp(aDistortion, 0.0, 1.0);
+    float lie = step(0.5, uColorMode);          // 0 聚类模式 / 1 任一热力模式
 
-    vColor = mix(aClusterColor, lieColor(aDistortion), uColorMode);
-    vCore = aSize;
+    // 失真同时驱动：颜色 + 大小 + 亮度 → 高失真词=报警的红巨星
+    vColor = mix(aClusterColor, heatColor(d, uColorMode), lie);
+    float tw = 0.85 + 0.15 * sin(uTime * 1.5 + aCluster * 2.0 + aSize * 30.0);
+    float sizeMul = mix(1.0, 2.4, d * lie);     // 热力模式下高失真更大
+    gl_PointSize = aSize * uPointScale * uPixelRatio * tw * sizeMul * (320.0 / -mv.z);
+    vBoost = mix(1.0, 0.55 + d * 1.7, lie);     // 热力模式下高失真更亮、低失真压暗
 
     float hi = 1.0;
     if (uHighlight >= 0.0) hi = abs(aCluster - uHighlight) < 0.5 ? 1.0 : 0.06;
@@ -76,16 +96,15 @@ const FRAG = /* glsl */`
   precision highp float;
   varying vec3 vColor;
   varying float vAlpha;
-  varying float vCore;
+  varying float vBoost;
 
   void main() {
     vec2 uv = gl_PointCoord - vec2(0.5);
     float r = length(uv);
     if (r > 0.5) discard;
-    // 软晕 + 高亮核（核更亮，供 bloom 抓取，产生辉光）
     float halo = smoothstep(0.5, 0.0, r);
     float core = smoothstep(0.18, 0.0, r);
-    vec3 col = vColor * (0.7 + 1.6 * core);   // 核处提亮 → HDR 感
+    vec3 col = vColor * (0.7 + 1.6 * core) * vBoost;   // 核提亮 + 失真亮度
     float a = (halo * 0.55 + core * 0.9) * vAlpha;
     gl_FragColor = vec4(col, a);
   }
@@ -212,7 +231,9 @@ export class Galaxy {
 
   setLayoutTarget(t) { this._morphTarget = Math.max(0, Math.min(1, t)); }
   setLayoutImmediate(t) { this._morphTarget = this._morph = t; this.uniforms.uMorph.value = t; }
-  setColorMode(mode) { this.uniforms.uColorMode.value = mode === 'lie' ? 1 : 0; }
+  setColorMode(mode) { // 'cluster' | 'turbo'/'lie' | 'viridis'
+    this.uniforms.uColorMode.value = mode === 'viridis' ? 2 : (mode === 'cluster' ? 0 : 1);
+  }
   setHighlight(clusterId) { this.uniforms.uHighlight.value = clusterId; }
   toggleLinks(on) { this._linksOn = on; }
 

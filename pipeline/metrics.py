@@ -18,8 +18,45 @@ from sklearn.manifold import trustworthiness as _sk_trustworthiness
 
 
 def trustworthiness(X_high, X_low, k=15):
-    """整体可信度，0..1，越高越忠实。直接用 sklearn 实现。"""
+    """局部可信度，0..1，越高越保近邻。直接用 sklearn 实现。
+    注意：UMAP 被设计为保局部近邻，所以此指标 UMAP 往往比 PCA 高——
+    UMAP 的"谎"在全局，见 per_point_global_distortion / global_fidelity。"""
     return float(_sk_trustworthiness(X_high, X_low, n_neighbors=k))
+
+
+def _ranks(a):
+    return np.argsort(np.argsort(a, axis=1), axis=1).astype(np.float32)
+
+
+def per_point_global_distortion(X_high, X_low, n_ref=600, seed=0):
+    """
+    每点"全局失真"：该点到一组参考点的距离向量，高维(余弦) vs 低维(欧氏) 的 Spearman，
+    distortion = 1 - clamp(spearman,0,1)。越大 = 这个点的全局距离关系被降维算法编得越假。
+    这是支撑"越好看越骗你"的正确度量（UMAP 全局失真高），替代局部假邻居率。
+    """
+    Xn = np.asarray(X_high, dtype=np.float32)
+    Xn = Xn / (np.linalg.norm(Xn, axis=1, keepdims=True) + 1e-8)   # 余弦 → L2 归一
+    Xl = np.asarray(X_low, dtype=np.float32)
+    N = Xn.shape[0]
+    rng = np.random.default_rng(seed)
+    ref = rng.choice(N, size=min(n_ref, N), replace=False)
+    Rh, Rl = Xn[ref], Xl[ref]
+    out = np.zeros(N, dtype=np.float32)
+    for s in range(0, N, 1024):
+        sl = slice(s, min(N, s + 1024))
+        dHi = 1.0 - Xn[sl] @ Rh.T
+        dLo = np.sqrt(((Xl[sl][:, None, :] - Rl[None, :, :]) ** 2).sum(-1))
+        rHi, rLo = _ranks(dHi), _ranks(dLo)
+        rHi -= rHi.mean(1, keepdims=True); rLo -= rLo.mean(1, keepdims=True)
+        num = (rHi * rLo).sum(1)
+        den = np.sqrt((rHi ** 2).sum(1) * (rLo ** 2).sum(1)) + 1e-8
+        out[sl] = 1.0 - np.clip(num / den, 0.0, 1.0)
+    return out
+
+
+def global_fidelity(X_high, X_low, n_query=400, seed=0):
+    """整体全局保真（平均 Spearman），越高越保全局。UMAP 应明显低于 PCA。"""
+    return float(1.0 - per_point_global_distortion(X_high, X_low, n_ref=n_query, seed=seed).mean())
 
 
 def per_point_false_neighbor_rate(X_high, X_low, k=15):

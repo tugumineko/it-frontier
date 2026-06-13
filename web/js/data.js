@@ -34,6 +34,12 @@ function normalize(raw) {
 
   const palette = (raw.meta?.clusters || []).map(c => c.color || [0.6, 0.7, 1.0]);
 
+  // 稳健分位归一化(2%/98%)：少数极端值不会把全图挤到色带一端，热力才准。
+  const rawD = raw.distortion.slice().sort((a, b) => a - b);
+  const q = (p) => rawD[Math.min(rawD.length - 1, Math.max(0, Math.floor(p * (rawD.length - 1))))];
+  const lo = q(0.02), hi = q(0.98), span = (hi - lo) || 1;
+  const distortionRaw = new Float32Array(n);   // 原始失真(给 tooltip 显示)
+
   for (let i = 0; i < n; i++) {
     pca[i * 3] = raw.pca[i][0];
     pca[i * 3 + 1] = raw.pca[i][1];
@@ -49,7 +55,8 @@ function normalize(raw) {
     clusterColor[i * 3 + 1] = col[1];
     clusterColor[i * 3 + 2] = col[2];
 
-    distortion[i] = raw.distortion[i];
+    distortionRaw[i] = raw.distortion[i];
+    distortion[i] = Math.max(0, Math.min(1, (raw.distortion[i] - lo) / span));  // 稳健归一
     // 高频词（靠前）画得更大更亮，让星系有层次
     size[i] = 0.8 + 1.8 * (raw.size ? raw.size[i] : Math.random());
   }
@@ -57,7 +64,7 @@ function normalize(raw) {
   return {
     n,
     tokens: raw.tokens,
-    cluster, clusterColor, distortion, size,
+    cluster, clusterColor, distortion, distortionRaw, size,
     pca, umap,
     links: raw.links || [],   // 真·近邻连线（[i,j] 索引对）
     meta: raw.meta || {},

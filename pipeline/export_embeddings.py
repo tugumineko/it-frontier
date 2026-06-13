@@ -27,7 +27,8 @@ try:
 except Exception:
     pass
 
-from metrics import per_point_false_neighbor_rate, trustworthiness, normalize_layout, apply_normalizer
+from metrics import (per_point_false_neighbor_rate, per_point_global_distortion,
+                     trustworthiness, global_fidelity, normalize_layout, apply_normalizer)
 
 # 给 KMeans 聚类配的颜色盘（HSV 均匀取色）
 import colorsys
@@ -86,12 +87,29 @@ def main():
     pca3, pca_norm = normalize_layout(pca3)
     umap3, umap_norm = normalize_layout(umap3)
 
-    # ---- 5. 失真分 + 整体可信度 ----
-    print("计算失真分与可信度…")
-    distortion = per_point_false_neighbor_rate(X, umap3, k=args.knn)  # 对 UMAP 测谎
-    pca_trust = round(trustworthiness(X, pca3, k=args.knn), 3)
+    # ---- 5. 失真分 + 双指标（局部可信度 + 全局保真）----
+    # 关键修正(经真实数据自测)：UMAP 局部反而更可信(保近邻)，它的"谎"在全局。
+    # 所以热力 distortion 用『全局失真』(对 UMAP)，测谎才站得住。
+    print("计算全局失真分与双指标…")
+    distortion = per_point_global_distortion(X, umap3)               # 对 UMAP 测谎(全局)
+    pca_trust = round(trustworthiness(X, pca3, k=args.knn), 3)       # 局部可信度
     umap_trust = round(trustworthiness(X, umap3, k=args.knn), 3)
-    print(f"  PCA 可信度 {pca_trust} | UMAP 可信度 {umap_trust}")
+    pca_global = round(global_fidelity(X, pca3), 3)                  # 全局保真
+    umap_global = round(global_fidelity(X, umap3), 3)
+    print(f"  局部可信度 PCA {pca_trust} / UMAP {umap_trust}（UMAP 高=保近邻）")
+    print(f"  全局保真   PCA {pca_global} / UMAP {umap_global}（UMAP 低=全局撒谎）")
+
+    # Shepard 图采样：~600 对点的 高维距离 vs PCA距离 vs UMAP距离（研究图用）
+    rng = np.random.default_rng(7)
+    Xn = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-8)
+    ii = rng.integers(0, topk, 600); jj = rng.integers(0, topk, 600)
+    dHi = 1.0 - (Xn[ii] * Xn[jj]).sum(1)
+    dPca = np.linalg.norm(pca3[ii] - pca3[jj], axis=1)
+    dUmap = np.linalg.norm(umap3[ii] - umap3[jj], axis=1)
+    norm01 = lambda a: ((a - a.min()) / (a.max() - a.min() + 1e-8))
+    shepard = {"dHi": [round(float(v),3) for v in norm01(dHi)],
+               "dPca": [round(float(v),3) for v in norm01(dPca)],
+               "dUmap": [round(float(v),3) for v in norm01(dUmap)]}
 
     # ---- 真·近邻连线（①意大利面）：高维(768D)真邻居，PCA 短、UMAP 被扯长 ----
     from sklearn.neighbors import NearestNeighbors
@@ -116,8 +134,10 @@ def main():
             "source": f"gpt2:{args.model}",
             "count": topk,
             "clusters": [{"id": i, "name": f"簇{i}", "color": palette[i]} for i in range(args.clusters)],
-            "metrics": {"pca_trustworthiness": pca_trust, "umap_trustworthiness": umap_trust},
-            "notes": "GPT-2 词向量真实数据；distortion = UMAP 低维假邻居率",
+            "metrics": {"pca_trustworthiness": pca_trust, "umap_trustworthiness": umap_trust,
+                        "pca_global": pca_global, "umap_global": umap_global},
+            "shepard": shepard,
+            "notes": "GPT-2 词向量真实数据；distortion = UMAP 全局失真(1-Spearman)；UMAP 局部诚实、全局撒谎",
         },
         "tokens": tokens,
         "cluster": cluster.tolist(),

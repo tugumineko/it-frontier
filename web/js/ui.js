@@ -17,12 +17,15 @@ export function setupUI(ctx) {
 
   // ---- 顶部读数 ----
   document.getElementById('ro-count').textContent = data.n.toLocaleString();
-  const trustUmap = data.meta.metrics?.umap_trustworthiness;
-  const trustPca = data.meta.metrics?.pca_trustworthiness;
+  const M = data.meta.metrics || {};
+  // 双指标：局部可信度(保近邻) + 全局保真(保距离)。UMAP 局部高、全局低 = 它的"谎"。
   const setTrust = () => {
-    const v = galaxy.morph > 0.5 ? trustUmap : trustPca;
-    document.getElementById('ro-trust').textContent = v != null ? v.toFixed(3) : '—';
-    document.getElementById('ro-layout').textContent = galaxy.morph > 0.5 ? 'UMAP' : 'PCA';
+    const u = galaxy.morph > 0.5;
+    const tr = u ? M.umap_trustworthiness : M.pca_trustworthiness;
+    const gl = u ? M.umap_global : M.pca_global;
+    document.getElementById('ro-layout').textContent = u ? 'UMAP' : 'PCA';
+    document.getElementById('ro-trust').textContent = tr != null ? tr.toFixed(3) : '—';
+    document.getElementById('ro-global').textContent = gl != null ? gl.toFixed(3) : '—';
   };
   setTrust();
 
@@ -47,18 +50,25 @@ export function setupUI(ctx) {
     setTrust();
   };
 
-  // ---- 着色：聚类 / 测谎 ----
+  // ---- 着色：聚类 / Turbo / viridis（感知均匀配色，禁用 rainbow）----
   const btnCluster = document.getElementById('btn-cluster');
-  const btnLie = document.getElementById('btn-lie');
+  const btnLie = document.getElementById('btn-lie');       // Turbo
+  const btnViridis = document.getElementById('btn-viridis');
   const legend = document.getElementById('lie-legend');
-  const setColor = (lie) => {
-    btnCluster.classList.toggle('active', !lie);
-    btnLie.classList.toggle('active', lie);
-    legend.hidden = !lie;
-    galaxy.setColorMode(lie ? 'lie' : 'cluster');
+  const cmapNote = document.getElementById('cmap-note');
+  drawLegend('turbo');
+  const setColor = (mode) => {  // 'cluster' | 'turbo' | 'viridis'
+    btnCluster.classList.toggle('active', mode === 'cluster');
+    btnLie.classList.toggle('active', mode === 'turbo');
+    btnViridis.classList.toggle('active', mode === 'viridis');
+    const heat = mode !== 'cluster';
+    legend.hidden = !heat; cmapNote.hidden = !heat;
+    if (heat) drawLegend(mode);
+    galaxy.setColorMode(mode);
   };
-  btnCluster.onclick = () => setColor(false);
-  btnLie.onclick = () => setColor(true);
+  btnCluster.onclick = () => setColor('cluster');
+  btnLie.onclick = () => setColor('turbo');
+  btnViridis.onclick = () => setColor('viridis');
 
   // ---- 真·近邻连线（意大利面）开关 ----
   const btnLinks = document.getElementById('btn-links');
@@ -73,7 +83,7 @@ export function setupUI(ctx) {
   // ---- 一键测谎：切到 UMAP + 测谎色（汇报爆点）----
   document.getElementById('btn-reveal').onclick = () => {
     selectLayout(true);
-    setColor(true);
+    setColor('turbo');
   };
 
   // ---- 案例库：按失真从高到低排，"最会骗人的聚类"在前 ----
@@ -94,7 +104,7 @@ export function setupUI(ctx) {
     document.getElementById('ro-focus-name').textContent = s.name;
     document.getElementById('ro-focus').textContent = `失真 ${(s.avg * 100).toFixed(0)}% · ${s.count} 点`;
     ctx.focus?.(id);      // 让相机聚焦该聚类（main.js 提供）
-    setColor(true);        // 聚焦时自动切测谎色，效果更明显
+    setColor('turbo');        // 聚焦时自动切测谎色，效果更明显
     setLinks(true);        // 自动亮出真·近邻连线：看它的邻居在 UMAP 里被扯到哪
   };
 
@@ -123,6 +133,8 @@ export function setupUI(ctx) {
   document.getElementById('btn-live').onclick = runLive;
   liveInput.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); runLive(); } };
 
+  ctx._setColor = setColor; ctx._setLinks = setLinks;   // 供其它交互复用
+
   // ---- 展示：背景强度 / 聚焦星系 / 辉光 ----
   const bgSlider = document.getElementById('bg-intensity');
   const bloomSlider = document.getElementById('bloom');
@@ -143,4 +155,37 @@ export function setupUI(ctx) {
     ctx.setBackgroundVisible?.(!focusOn);
     if (focusOn) setLinks(true);             // 聚焦时亮出近邻连线，突出"星系连结"
   };
+}
+
+// ---- 图例配色（JS 版 Turbo/viridis，与 shader 完全一致，保证图例=点色）----
+function turboJS(x) {
+  x = Math.max(0, Math.min(1, x));
+  const x2 = x * x, x3 = x2 * x, x4 = x2 * x2, x5 = x4 * x;
+  const d4 = (k) => k[0] + k[1] * x + k[2] * x2 + k[3] * x3;
+  const d2 = (k) => k[0] * x4 + k[1] * x5;
+  const r = d4([0.13572138, 4.61539260, -42.66032258, 132.13108234]) + d2([-152.94239396, 59.28637943]);
+  const g = d4([0.09140261, 2.19418839, 4.84296658, -14.18503333]) + d2([4.27729857, 2.82956604]);
+  const b = d4([0.10667330, 12.64194608, -60.58204836, 110.36276771]) + d2([-89.90310912, 27.34824973]);
+  return [r, g, b].map((c) => Math.max(0, Math.min(1, c)) * 255);
+}
+function viridisJS(t) {
+  t = Math.max(0, Math.min(1, t));
+  const C = [[0.2777273,0.0054073,0.3340998],[0.1050930,1.4046135,1.3845902],[-0.3308618,0.2148476,0.0950952],
+    [-4.6342305,-5.7991010,-19.3324410],[6.2282699,14.1799334,56.6905526],[4.7763850,-13.7451454,-65.3530326],
+    [-5.4354559,4.6458526,26.3124352]];
+  return [0,1,2].map((ch) => {
+    let v = C[6][ch];
+    for (let i = 5; i >= 0; i--) v = C[i][ch] + t * v;
+    return Math.max(0, Math.min(1, v)) * 255;
+  });
+}
+function drawLegend(mode) {
+  const cv = document.getElementById('cmap-legend');
+  if (!cv) return;
+  const g = cv.getContext('2d'), w = cv.width, h = cv.height;
+  for (let x = 0; x < w; x++) {
+    const c = (mode === 'viridis' ? viridisJS : turboJS)(x / (w - 1));
+    g.fillStyle = `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`;
+    g.fillRect(x, 0, 1, h);
+  }
 }

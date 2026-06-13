@@ -6,12 +6,10 @@ __pycache__/
 .venv/
 venv/
 
-# 真实管线产物（较大 / 可由脚本再生，不入库）
-web/data/galaxy.json
+# 真实管线产物
+# galaxy.json：真实 GPT-2 词向量数据(~0.5MB)，入库让 demo 克隆即用真实数据
+# projector.joblib：UMAP 模型(~84MB，含训练数据)，太大不入库；跑 export 本地再生供实时后端
 web/data/projector.joblib
-
-# 保留：仓库自带的小样本，克隆即可演示
-!web/data/galaxy.sample.json
 
 # 系统
 .DS_Store
