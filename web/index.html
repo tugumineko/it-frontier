@@ -90,10 +90,16 @@
     </section>
 
     <section class="grp">
-      <h3>实时检验（本地后端）</h3>
-      <textarea id="live-input" rows="2" placeholder="老师给一句话 / 几个词，回车现跑…"></textarea>
-      <button id="btn-live" class="primary">▶ 现场跑这段输入</button>
-      <div class="hint" id="live-status">后端未连接时会自动提示，可改用案例库。</div>
+      <h3>数据集（实时生成 / 保存 / 导入）</h3>
+      <textarea id="live-input" rows="2" placeholder="给一段话 / 一串词，回车现跑 GPT-2，重新生成一套星系…"></textarea>
+      <button id="btn-live" class="primary">▶ 现场生成新星系</button>
+      <div class="row" style="margin-top:8px">
+        <button id="btn-save" class="seg">💾 保存</button>
+        <button id="btn-import" class="seg">📂 导入</button>
+        <button id="btn-default" class="seg">🌌 主银河</button>
+      </div>
+      <input id="file-import" type="file" accept="application/json,.json" hidden />
+      <div class="hint" id="live-status">现场生成需运行 server/app.py 并从 http://127.0.0.1:5000 打开。保存/导入/主银河 离线即可用。</div>
     </section>
   </aside>
 

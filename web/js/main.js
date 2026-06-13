@@ -7,7 +7,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { VignetteShader } from 'three/addons/shaders/VignetteShader.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { loadGalaxy } from './data.js';
+import { loadGalaxyRaw, normalizeGalaxy } from './data.js';
 import { Galaxy } from './galaxy.js';
 import { World, BLOOM_LAYER } from './world.js';
 import { setupUI } from './ui.js';
@@ -138,23 +138,72 @@ function focusCluster(id) {
   setMode('聚焦：' + (galaxy.data.meta.clusters?.[id]?.name || ('簇' + id)));
 }
 
-// ---- 主流程 ----
-let galaxy;
+// ---- 主流程：数据集可整体切换（实时生成 / 导入 / 主银河）----
+let galaxy = null, data = null, rawData = null, uiApi = null, chartsApi = null;
+
+// 用一份(原始 schema)数据重建整个星系：dispose 旧的 → 建新的，保留当前视图状态。
+function applyGalaxyObj(raw) {
+  const cm = galaxy ? galaxy.uniforms.uColorMode.value : 0;
+  const morph = galaxy ? galaxy.morph : 0;
+  const linksOn = galaxy ? galaxy._linksOn : false;
+  if (galaxy) galaxy.dispose();
+  rawData = raw;
+  data = normalizeGalaxy(raw);
+  galaxy = new Galaxy(scene, data);
+  for (const o of [galaxy.points, galaxy.links, galaxy.liveGroup]) { o.scale.setScalar(GALAXY_SCALE); o.renderOrder = 3; }
+  galaxy.points.layers.enable(BLOOM_LAYER);
+  galaxy.uniforms.uColorMode.value = cm;
+  galaxy.setLayoutImmediate(morph);
+  galaxy.toggleLinks(linksOn);
+  clusterCentroids = makeCentroids(data);
+}
+
+// 切换数据集（生成/导入/主银河共用）：重建 + 刷新 UI/图表 + 复位选择与相机模式。
+function setDataset(raw) {
+  applyGalaxyObj(raw);
+  cancelFlight();
+  if (typeof deselect === 'function') deselect();
+  if (uiApi) uiApi.refresh();
+  if (chartsApi) chartsApi.refresh(data);
+  setMode('自由观察');
+}
+
+function downloadJSON(obj, name) {
+  const blob = new Blob([JSON.stringify(obj)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+const ctx = {
+  get galaxy() { return galaxy; },
+  get data() { return data; },
+  focus: focusCluster,
+  setWorldIntensity: (v) => world.setWorldIntensity(v),
+  setBackgroundVisible: (on) => { scene.background = on ? (world.bgTexture || null) : null; },
+  setBloomStrength: (v) => { bloomPass.strength = v; },
+  setPointScale: (v) => { galaxy.uniforms.uPointScale.value = v; },
+  saveData: () => downloadJSON(rawData, 'galaxy-data.json'),
+  importData: (obj) => setDataset(obj),                 // normalizeGalaxy 内部校验
+  loadDefault: async () => { setDataset(await loadGalaxyRaw()); },
+  generate: async (text) => {
+    const res = await fetch('/api/generate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const out = await res.json();
+    if (out.error) throw new Error(out.error);
+    setDataset(out);
+    return { count: out.tokens.length };
+  },
+};
+
 (async () => {
   try {
-    const data = await loadGalaxy();
-    galaxy = new Galaxy(scene, data);
-    for (const obj of [galaxy.points, galaxy.links, galaxy.liveGroup]) { obj.scale.setScalar(GALAXY_SCALE); obj.renderOrder = 3; }
-    galaxy.points.layers.enable(BLOOM_LAYER);   // 词星核进 bloom（发光），但结构靠 base 仍清晰
-    clusterCentroids = makeCentroids(data);
-    setupUI({
-      galaxy, data, focus: focusCluster,
-      setWorldIntensity: (v) => world.setWorldIntensity(v),
-      setBackgroundVisible: (on) => { scene.background = on ? (world.bgTexture || null) : null; },
-      setBloomStrength: (v) => { bloomPass.strength = v; },
-      setPointScale: (v) => { galaxy.uniforms.uPointScale.value = v; },
-    });
-    setupCharts(data);
+    applyGalaxyObj(await loadGalaxyRaw());
+    uiApi = setupUI(ctx);
+    chartsApi = setupCharts(data);
     controls.update();
     homeState = captureState();        // 锚定全景机位，供"返回总览/ESC"平滑飞回
     setMode('自由观察');

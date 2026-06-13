@@ -10,7 +10,8 @@ const DATA_URLS = [
   './data/galaxy.sample.json',   // 兜底：仓库自带的小样本
 ];
 
-export async function loadGalaxy() {
+// 取原始数据集(galaxy.json schema)。保留原始结构用于"保存数据"(归一化后是 Float32Array，无法直接 JSON)。
+export async function loadGalaxyRaw() {
   let raw = null;
   for (const url of DATA_URLS) {
     try {
@@ -19,11 +20,14 @@ export async function loadGalaxy() {
     } catch (_) { /* 试下一个 */ }
   }
   if (!raw) throw new Error('找不到星系数据，请先运行 pipeline 生成 data/galaxy.json');
-  return normalize(raw);
+  return raw;
 }
 
+export async function loadGalaxy() { return normalizeGalaxy(await loadGalaxyRaw()); }
+
 // 把 JSON 里的嵌套数组拍平成 Float32Array，喂给 GPU 更高效
-function normalize(raw) {
+export function normalizeGalaxy(raw) {
+  if (!raw || !Array.isArray(raw.tokens) || !Array.isArray(raw.pca)) throw new Error('无效星系数据');
   const n = raw.tokens.length;
   const pca = new Float32Array(n * 3);
   const umap = new Float32Array(n * 3);

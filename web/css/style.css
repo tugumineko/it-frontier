@@ -39,8 +39,10 @@ canvas { display: block; }
 #panel {
   position: fixed;
   top: 18px; right: 18px;
-  z-index: 10;
+  z-index: 12;
   width: 270px;
+  max-height: calc(100vh - 36px);     /* 控件多时可滚动，避免溢出屏幕、底部按钮点不到 */
+  overflow-y: auto; overflow-x: hidden;
   background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: 14px;
@@ -48,6 +50,8 @@ canvas { display: block; }
   backdrop-filter: blur(10px);
   box-shadow: 0 8px 40px rgba(0,0,0,0.5);
 }
+#panel::-webkit-scrollbar { width: 7px; }
+#panel::-webkit-scrollbar-thumb { background: rgba(120,150,255,0.3); border-radius: 4px; }
 .grp { margin-bottom: 16px; }
 .grp:last-child { margin-bottom: 0; }
 .grp h3 { margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--txt-dim); text-transform: uppercase; letter-spacing: 1px; }
@@ -164,7 +168,7 @@ textarea { margin-bottom: 8px; }
 
 /* 研究图 HUD */
 #charts {
-  position: fixed; right: 18px; bottom: 18px; z-index: 10;
+  position: fixed; right: 18px; bottom: 18px; z-index: 13;
   width: 264px;
   background: var(--panel); border: 1px solid var(--panel-border);
   border-radius: 12px; padding: 10px 12px; backdrop-filter: blur(10px);

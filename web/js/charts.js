@@ -67,14 +67,13 @@ export function setupCharts(data) {
   const toggle = document.getElementById('ch-toggle');
   const shepCv = document.getElementById('shepard');
   const histCv = document.getElementById('histogram');
-  const shep = data.meta?.shepard;
-  const metrics = data.meta?.metrics;
+  let cur = data;                 // 当前数据集（切换时由 refresh 更新）
   let which = 'umap';
 
   const redraw = () => {
     if (body.hidden) return;
-    drawShepard(shepCv, shep, which, metrics);
-    drawHistogram(histCv, data.distortion);
+    drawShepard(shepCv, cur.meta?.shepard, which, cur.meta?.metrics);
+    drawHistogram(histCv, cur.distortion);
   };
   toggle.onclick = () => {
     body.hidden = !body.hidden;
@@ -93,4 +92,6 @@ export function setupCharts(data) {
   };
   sp.onclick = () => pick('pca');
   su.onclick = () => pick('umap');
+
+  return { refresh(newData) { cur = newData; redraw(); } };
 }

@@ -55,8 +55,14 @@ def try_load_real():
         dist_ref = np.asarray(g["distortion"], dtype=np.float32)
         nn = NearestNeighbors(n_neighbors=min(15, len(umap_ref))).fit(umap_ref)
 
-        print("✓ real 模式：GPT-2 + 投影器已加载")
-        return {"np": np, "tok": tok, "wte": wte, "b": b, "nn": nn, "dist_ref": dist_ref}
+        # 词表近邻索引（用于 /api/generate 把输入词扩成"邻域星系"）：top VOCAB 个常见词的余弦近邻
+        VOCAB = min(20000, wte.shape[0])
+        wte_norm = wte[:VOCAB] / (np.linalg.norm(wte[:VOCAB], axis=1, keepdims=True) + 1e-8)
+        vocab_nn = NearestNeighbors(n_neighbors=9, metric="cosine").fit(wte[:VOCAB])
+
+        print("✓ real 模式：GPT-2 + 投影器 + 词表近邻索引已加载")
+        return {"np": np, "tok": tok, "wte": wte, "b": b, "nn": nn, "dist_ref": dist_ref,
+                "vocab_nn": vocab_nn, "vocab": VOCAB}
     except Exception as e:
         print(f"· real 模式不可用（{e.__class__.__name__}: {e}），回退 mock")
         return None
@@ -142,7 +148,108 @@ def embed_mock(text):
     return out
 
 
+# ---------- /api/generate：用输入词 + 其高维邻域，重新生成一整套星系 ----------
+def build_live_dataset(text):
+    np = REAL["np"]; tok = REAL["tok"]; wte = REAL["wte"]; VOCAB = REAL["vocab"]
+    import sys, colorsys
+    sys.path.insert(0, os.path.join(HERE, "..", "pipeline"))
+    from metrics import per_point_global_distortion, trustworthiness, global_fidelity, normalize_layout
+    from sklearn.decomposition import PCA
+    from sklearn.cluster import KMeans
+    import umap as _umap
+
+    ids = list(dict.fromkeys(tok.encode(text)))[:40]            # 去重、限 40 个查询词
+    if not ids:
+        return {"error": "输入无法编码"}
+    qset = set(ids)
+    Q = wte[np.asarray(ids)]
+    Q = Q / (np.linalg.norm(Q, axis=1, keepdims=True) + 1e-8)
+    _, nb = REAL["vocab_nn"].kneighbors(Q)                      # 每个查询词的高维近邻(索引=token id)
+    for row in nb:
+        for j in row[1:]:
+            qset.add(int(j))
+    ids_all = list(qset)
+    if len(ids_all) < 240:                                      # 点太少 UMAP 没结构 → 补常见词上下文
+        step = max(1, VOCAB // 300)
+        for t in range(0, VOCAB, step):
+            if t not in qset:
+                ids_all.append(t)
+            if len(ids_all) >= 280:
+                break
+    ids_all = ids_all[:700]
+    n = len(ids_all)
+    arr = np.asarray(ids_all)
+    X = wte[arr].astype(np.float32)
+    tokens = [tok.decode([int(t)]).strip() or "·" for t in ids_all]
+
+    pca3 = PCA(n_components=3, random_state=42).fit_transform(X)
+    kum = min(15, max(5, n // 8))
+    umap3 = _umap.UMAP(n_components=3, n_neighbors=kum, min_dist=0.1, metric="cosine", random_state=42).fit_transform(X)
+    pca3, _ = normalize_layout(pca3)
+    umap3, _ = normalize_layout(umap3)
+
+    distortion = per_point_global_distortion(X, umap3, n_ref=min(400, n))
+    kk = min(15, n - 1)
+    pca_trust = round(trustworthiness(X, pca3, k=kk), 3)
+    umap_trust = round(trustworthiness(X, umap3, k=kk), 3)
+    pca_global = round(global_fidelity(X, pca3, n_query=min(300, n)), 3)
+    umap_global = round(global_fidelity(X, umap3, n_query=min(300, n)), 3)
+
+    kc = min(8, max(2, n // 30))
+    cl = KMeans(n_clusters=kc, n_init=4, random_state=42).fit_predict(X)
+    palette = [list(colorsys.hsv_to_rgb(i / kc, 0.55, 1.0)) for i in range(kc)]
+
+    rng = np.random.default_rng(7)
+    Xn = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-8)
+    nP = min(2000, n * n)
+    li = rng.integers(0, n, nP); lj = rng.integers(0, n, nP)
+    keep = li != lj; li, lj = li[keep], lj[keep]
+    dh = 1.0 - (Xn[li] * Xn[lj]).sum(1); du = np.linalg.norm(umap3[li] - umap3[lj], axis=1)
+    hN = (dh - dh.min()) / (np.ptp(dh) + 1e-8); uN = (du - du.min()) / (np.ptp(du) + 1e-8)
+    mism = np.abs(hN - uN)
+    order = np.argsort(-mism)[:min(300, len(li))]
+    links = [[int(li[k]), int(lj[k])] for k in order]
+    link_score = [round(float(mism[k]), 3) for k in order]
+
+    si = rng.integers(0, n, min(500, n * 2)); sj = rng.integers(0, n, min(500, n * 2))
+    dHi = 1.0 - (Xn[si] * Xn[sj]).sum(1); dP = np.linalg.norm(pca3[si] - pca3[sj], axis=1); dU = np.linalg.norm(umap3[si] - umap3[sj], axis=1)
+    n01 = lambda a: (a - a.min()) / (np.ptp(a) + 1e-8)
+    shepard = {"dHi": [round(float(v), 3) for v in n01(dHi)],
+               "dPca": [round(float(v), 3) for v in n01(dP)],
+               "dUmap": [round(float(v), 3) for v in n01(dU)]}
+
+    size = [1.0 if int(t) in set(ids) else 0.45 for t in ids_all]   # 你的输入词大一点
+
+    return {
+        "meta": {"source": "live:" + text[:40], "count": n,
+                 "clusters": [{"id": i, "name": "簇" + str(i), "color": palette[i]} for i in range(kc)],
+                 "metrics": {"pca_trustworthiness": pca_trust, "umap_trustworthiness": umap_trust,
+                             "pca_global": pca_global, "umap_global": umap_global},
+                 "shepard": shepard,
+                 "notes": "实时生成：输入词 + 其高维邻域，重新 PCA/UMAP；输入词已放大"},
+        "tokens": tokens, "cluster": cl.tolist(),
+        "pca": [[round(float(v), 2) for v in p] for p in pca3],
+        "umap": [[round(float(v), 2) for v in p] for p in umap3],
+        "distortion": [round(float(v), 3) for v in distortion],
+        "size": size, "links": links, "link_score": link_score,
+    }
+
+
 # ---------- 路由 ----------
+@app.route("/api/generate", methods=["POST"])
+def api_generate():
+    text = (request.get_json(silent=True) or {}).get("text", "").strip()
+    if not text:
+        return jsonify({"error": "empty"}), 400
+    if not REAL:
+        return jsonify({"error": "需要 real 模式：先 pip install -r pipeline/requirements.txt 并运行 export_embeddings.py 生成 projector.joblib"}), 503
+    try:
+        return jsonify(build_live_dataset(text))
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/embed", methods=["POST"])
 def api_embed():
     text = (request.get_json(silent=True) or {}).get("text", "").strip()

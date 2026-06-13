@@ -293,4 +293,12 @@ export class Galaxy {
   }
 
   get morph() { return this._morph; }
+
+  // 切换数据集时彻底清理，避免内存泄漏
+  dispose() {
+    this.liveGroup.traverse((c) => { c.geometry && c.geometry.dispose(); c.material && c.material.dispose(); });
+    this.scene.remove(this.points); this.points.geometry.dispose(); this.material.dispose();
+    this.scene.remove(this.links); this.links.geometry.dispose(); this.linkMat.dispose();
+    this.scene.remove(this.liveGroup);
+  }
 }
