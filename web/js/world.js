@@ -82,7 +82,8 @@ export class World {
     this.scene.add(this._starfield(40000));
     this.scene.add(this._spiralDisk(100000));
     this.scene.add(this._dustLanes(30000));
-    this._galacticCore();
+    // 不再画"银河核"亮斑：它与中心的语义簇交错、过曝、干扰判断。
+    // 视觉中心留给语义星系，装饰螺旋盘做成"中空环"包住它(见 _spiralDisk 的 R_IN)。
     if (NEBULA_CORES > 0) this._nebulaCores(NEBULA_CORES);
   }
 
@@ -204,11 +205,12 @@ export class World {
 
   // ---- L2 银河星盘（Bruno Simon 螺旋臂 + 差速自转）----
   _spiralDisk(N) {
-    const R = 1050, branches = 3, spinTurns = 1.6, randomness = 0.22, rp = 3.0, yFlat = 0.05;
+    const R = 1050, R_IN = 330, branches = 3, spinTurns = 1.6, randomness = 0.22, rp = 3.0, yFlat = 0.05;
     const inside = new THREE.Color('#ffe1ad'), outside = new THREE.Color('#3a6bd8');
     const pos = new Float32Array(N*3), col = new Float32Array(N*3), siz = new Float32Array(N), seed = new Float32Array(N);
     for (let i=0;i<N;i++){
-      const radius = Math.pow(Math.random(), 1.5) * R;            // 向心集中
+      // 中空环：装饰盘从 R_IN 起，中心(语义星系 ~半径180)留空，不与簇交错
+      const radius = R_IN + Math.pow(Math.random(), 0.8) * (R - R_IN);
       const branchAngle = ((i % branches) / branches) * Math.PI * 2;
       const spinAngle = (radius / R) * spinTurns * Math.PI * 2;
       const sgn = () => (Math.random()<0.5?1:-1);
@@ -218,8 +220,8 @@ export class World {
       pos[i*3]   = Math.cos(branchAngle+spinAngle)*radius + rx;
       pos[i*3+1] = ry;
       pos[i*3+2] = Math.sin(branchAngle+spinAngle)*radius + rz;
-      const c = inside.clone().lerp(outside, radius/R);
-      const b = 0.55;                                            // 压在阈值下，不洗白
+      const c = inside.clone().lerp(outside, (radius-R_IN)/(R-R_IN));
+      const b = 0.5;                                             // 压在阈值下，不洗白
       col[i*3]=c.r*b; col[i*3+1]=c.g*b; col[i*3+2]=c.b*b;
       siz[i]=Math.random()<0.04?2.5+Math.random()*2:0.9+Math.random()*1.4;
       seed[i]=Math.random();
@@ -262,10 +264,10 @@ export class World {
 
   // ---- L3 尘埃带（NormalBlending 遮挡，做出暗带/负空间）----
   _dustLanes(N) {
-    const R = 1050, branches = 3, spinTurns = 1.6;
+    const R = 1050, R_IN = 330, branches = 3, spinTurns = 1.6;
     const pos = new Float32Array(N*3), alp = new Float32Array(N);
     for (let i=0;i<N;i++){
-      const radius = (0.25 + Math.random()*0.75) * R;             // 偏外圈
+      const radius = R_IN + Math.random()*(R - R_IN);             // 与盘同样从 R_IN 起，中心留空
       const branchAngle = ((i % branches) / branches) * Math.PI * 2;
       const spinAngle = (radius / R) * spinTurns * Math.PI * 2 + 0.12;  // 略偏旋臂前缘
       const scatter = (s)=>Math.pow(Math.random(),2.0)*(Math.random()<0.5?1:-1)*s*radius;
