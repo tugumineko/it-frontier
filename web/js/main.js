@@ -40,6 +40,7 @@ controls.autoRotateSpeed = 0.2;
 
 // ---- 沉浸式世界（穹顶 + 星野 + 螺旋星盘 + 尘埃带 + 银河核）----
 const world = new World(scene);
+world.bakeBackground(renderer);   // Step7：把星云烤成 cube 背景（无缝+省逐帧开销）
 
 // ================= 选择性 Bloom（双 composer）=================
 // 原理：bloomComposer 只渲"发光层"(银河核 + 语义词星)，UnrealBloom 抠出辉光；
@@ -130,7 +131,7 @@ function animate() {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
 
-  world.update(dt);
+  world.update(dt, camera);
   if (galaxy) galaxy.update(dt);
 
   if (focusTarget) {
@@ -141,9 +142,12 @@ function animate() {
   }
   controls.update();
 
-  // 选择性 bloom：先只渲发光层 → 再渲完整场景叠加
+  // 选择性 bloom：先只渲发光层(黑背景) → 再渲完整场景(含星云背景)叠加
+  const bg = scene.background;
+  scene.background = null;                 // bloom 通道必须黑背景，否则星云会被错误发光
   camera.layers.set(BLOOM_LAYER);
   bloomComposer.render();
+  scene.background = bg;
   camera.layers.set(0);
   finalComposer.render();
 }

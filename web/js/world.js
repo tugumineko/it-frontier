@@ -12,6 +12,7 @@
 import * as THREE from 'three';
 
 export const BLOOM_LAYER = 1;   // 只有这层进 bloom
+const NEBULA_CORES = 3;         // Step8 体积星云核数量（设 0 可一键关闭）
 
 // ============ L0 星云穹顶 ============
 const DOME_FRAG = /* glsl */`
@@ -75,23 +76,94 @@ export class World {
   }
 
   _build() {
-    this._dome();
+    // L0 星云背景由 bakeBackground() 烤成立方体贴图(无缝+省去逐帧 fbm)；此处不加逐帧 dome。
     this.scene.add(this._starfield(40000));
     this.scene.add(this._spiralDisk(100000));
     this.scene.add(this._dustLanes(30000));
     this._galacticCore();
+    if (NEBULA_CORES > 0) this._nebulaCores(NEBULA_CORES);
   }
 
-  _dome() {
-    const geo = new THREE.SphereGeometry(2600, 48, 32);
-    const mat = new THREE.ShaderMaterial({
+  // ---- Step8 体积星云核：billboard impostor 内做短程 raymarch + Beer-Lambert ----
+  // 与"加性平片"不同：每个 core 是真·体积(自遮挡/有内部结构)，少量、控暗(不进 bloom)。
+  _nebulaCores(n) {
+    const FRAG = /* glsl */`
+      precision highp float;
+      varying vec2 vUv;
+      uniform float uTime, uSeed, uScale, uAbsorb, uStep, uOpacity;
+      float hash(vec3 p){ p=fract(p*0.3183099+0.1); p*=17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }
+      float vnoise(vec3 x){ vec3 i=floor(x),f=fract(x); f=f*f*(3.0-2.0*f);
+        return mix(mix(mix(hash(i+vec3(0,0,0)),hash(i+vec3(1,0,0)),f.x),mix(hash(i+vec3(0,1,0)),hash(i+vec3(1,1,0)),f.x),f.y),
+                   mix(mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x),mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x),f.y),f.z); }
+      float fbm(vec3 p){ float a=0.5,s=0.0; for(int i=0;i<4;i++){ s+=a*vnoise(p); p*=2.03; a*=0.5; } return s; }
+      vec3 ramp(float d){
+        vec3 a=vec3(0.16,0.03,0.08), b=vec3(0.48,0.12,0.40), c=vec3(0.52,0.44,0.58);
+        return d<0.5 ? mix(a,b,d*2.0) : mix(b,c,(d-0.5)*2.0);
+      }
+      void main(){
+        vec2 p = (vUv-0.5)*2.0;
+        float r2 = dot(p,p);
+        if(r2>1.0) discard;
+        float zf = sqrt(1.0-r2);                 // 球前表面
+        float T=1.0; vec3 acc=vec3(0.0);
+        const int STEPS=16;
+        for(int i=0;i<STEPS;i++){
+          float z = zf - float(i)*(2.0*zf/float(STEPS));
+          vec3 sp = vec3(p, z);
+          float dens = fbm(sp*uScale + uSeed + uTime*0.03);
+          dens = smoothstep(0.46, 0.92, dens) * (1.0 - r2);   // 球内 + 边缘软衰减
+          if(dens>0.001){
+            float dT = exp(-uAbsorb*dens*uStep);
+            acc += (T - T*dT) * ramp(dens);
+            T *= dT;
+          }
+        }
+        gl_FragColor = vec4(acc, (1.0 - T) * uOpacity);
+      }
+    `;
+    this.cores = [];
+    for (let k = 0; k < n; k++) {
+      const mat = new THREE.ShaderMaterial({
+        uniforms: { uTime: this.uTime, uSeed: { value: k*7.3 + 1.1 }, uScale: { value: 1.6 },
+          uAbsorb: { value: 1.4 }, uStep: { value: 2.0/16 }, uOpacity: { value: 0.42 } },
+        vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+        fragmentShader: FRAG, transparent: true, depthWrite: false, blending: THREE.NormalBlending,
+      });
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+      const rr = 260 + Math.random()*620, a = Math.random()*Math.PI*2;
+      m.position.set(Math.cos(a)*rr, (Math.random()-0.5)*120, Math.sin(a)*rr);
+      const s = 360 + Math.random()*360; m.scale.set(s, s, 1);
+      m.frustumCulled = false;
+      this.cores.push(m); this.scene.add(m);
+    }
+  }
+
+  _domeMaterial() {
+    return new THREE.ShaderMaterial({
       uniforms: { uTime: this.uTime },
       vertexShader: `varying vec3 vDir; void main(){ vDir=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
       fragmentShader: DOME_FRAG, side: THREE.BackSide, depthWrite: false, fog: false,
     });
-    this.dome = new THREE.Mesh(geo, mat);
-    this.dome.renderOrder = -10;
-    this.scene.add(this.dome);
+  }
+
+  // Step7：把星云一次性烤进 cube 贴图当背景 —— 无缝(立方体无极点/接缝) + 演示期零逐帧 fbm 开销。
+  // 失败则回退到逐帧 dome 大球，保证背景永远不空。
+  bakeBackground(renderer) {
+    try {
+      const tmp = new THREE.Scene();
+      const sphere = new THREE.Mesh(new THREE.SphereGeometry(10, 48, 32), this._domeMaterial());
+      tmp.add(sphere);
+      const cubeRT = new THREE.WebGLCubeRenderTarget(1024, { type: THREE.HalfFloatType });
+      const cam = new THREE.CubeCamera(0.1, 100, cubeRT);
+      cam.update(renderer, tmp);
+      this.scene.background = cubeRT.texture;
+      this.bgTexture = cubeRT.texture;
+      sphere.geometry.dispose();
+    } catch (e) {
+      console.warn('星云烘焙失败，回退逐帧 dome：', e);
+      const dome = new THREE.Mesh(new THREE.SphereGeometry(2600, 48, 32), this._domeMaterial());
+      dome.renderOrder = -10; this.dome = dome; this.scene.add(dome);
+    }
   }
 
   _starMaterial(blending) {
@@ -244,8 +316,9 @@ export class World {
     this.core=sp; this.scene.add(sp);
   }
 
-  update(dt) {
+  update(dt, camera) {
     this.uTime.value += dt;
     if (this.starfield) this.starfield.rotation.y += dt*0.004;
+    if (this.cores && camera) for (const m of this.cores) m.quaternion.copy(camera.quaternion); // billboard
   }
 }
