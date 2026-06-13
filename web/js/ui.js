@@ -145,6 +145,8 @@ export function setupUI(ctx) {
     ctx.setBackgroundVisible?.(v > 0.08);   // 调到很低时直接黑场，最大对比
   };
   bloomSlider.oninput = () => ctx.setBloomStrength?.(parseFloat(bloomSlider.value));
+  const ptSlider = document.getElementById('pt-size');
+  if (ptSlider) ptSlider.oninput = () => ctx.setPointScale?.(parseFloat(ptSlider.value));
   let focusOn = false;
   btnFocus.onclick = () => {
     focusOn = !focusOn;

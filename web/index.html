@@ -72,6 +72,9 @@
       <label class="slider-label">辉光强度
         <input id="bloom" type="range" min="0" max="2" step="0.05" value="0.75" />
       </label>
+      <label class="slider-label">词星大小
+        <input id="pt-size" type="range" min="0.6" max="4" step="0.1" value="2" />
+      </label>
     </section>
 
     <section class="grp">
@@ -101,6 +104,23 @@
 
   <!-- hover 词卡（屏幕投影拾取，单实例复用）-->
   <div id="tooltip" hidden></div>
+
+  <!-- 右下角 研究图 HUD（测谎铁证）-->
+  <div id="charts">
+    <div class="ch-head">
+      <span>测谎铁证</span>
+      <button id="ch-toggle" class="seg" style="padding:2px 8px;font-size:11px">展开</button>
+    </div>
+    <div id="ch-body" hidden>
+      <div class="ch-title">Shepard 图：高维距离 → 低维距离
+        <span class="ch-seg"><button id="shep-pca" class="seg">PCA</button><button id="shep-umap" class="seg active">UMAP</button></span>
+      </div>
+      <canvas id="shepard" width="240" height="160"></canvas>
+      <div class="ch-cap" id="shep-cap">UMAP：点散成一团 = 全局距离基本没意义（在撒谎）。</div>
+      <div class="ch-title" style="margin-top:10px">全局失真分布（按词数）</div>
+      <canvas id="histogram" width="240" height="90"></canvas>
+    </div>
+  </div>
 
   <div id="loading">正在点亮星系…</div>
 

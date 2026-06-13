@@ -122,6 +122,19 @@ textarea { margin-bottom: 8px; }
 .ro-row { display: flex; justify-content: space-between; gap: 18px; padding: 3px 0; color: var(--txt-dim); }
 .ro-row b { color: var(--txt); font-weight: 600; }
 
+/* 研究图 HUD */
+#charts {
+  position: fixed; right: 18px; bottom: 18px; z-index: 10;
+  width: 264px;
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: 12px; padding: 10px 12px; backdrop-filter: blur(10px);
+}
+.ch-head { display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-weight: 600; color: var(--txt-dim); letter-spacing: 1px; }
+.ch-title { font-size: 11px; color: var(--txt-dim); margin: 8px 0 4px; display: flex; justify-content: space-between; align-items: center; }
+.ch-seg button { padding: 1px 7px; font-size: 10px; margin-left: 4px; }
+.ch-cap { font-size: 10px; color: var(--txt-dim); margin-top: 3px; line-height: 1.4; }
+#shepard, #histogram { width: 100%; display: block; background: rgba(0,0,0,0.25); border-radius: 6px; }
+
 /* hover 词卡 */
 #tooltip {
   position: fixed;

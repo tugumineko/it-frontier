@@ -11,6 +11,7 @@ import { loadGalaxy } from './data.js';
 import { Galaxy } from './galaxy.js';
 import { World, BLOOM_LAYER } from './world.js';
 import { setupUI } from './ui.js';
+import { setupCharts } from './charts.js';
 
 const GALAXY_SCALE = 2.6;
 
@@ -133,7 +134,9 @@ let galaxy;
       setWorldIntensity: (v) => world.setWorldIntensity(v),
       setBackgroundVisible: (on) => { scene.background = on ? (world.bgTexture || null) : null; },
       setBloomStrength: (v) => { bloomPass.strength = v; },
+      setPointScale: (v) => { galaxy.uniforms.uPointScale.value = v; },
     });
+    setupCharts(data);
     document.getElementById('loading').classList.add('hidden');
   } catch (e) {
     document.getElementById('loading').textContent = '加载失败：' + e.message;
