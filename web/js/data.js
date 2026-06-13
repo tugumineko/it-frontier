@@ -59,6 +59,7 @@ function normalize(raw) {
     tokens: raw.tokens,
     cluster, clusterColor, distortion, size,
     pca, umap,
+    links: raw.links || [],   // 真·近邻连线（[i,j] 索引对）
     meta: raw.meta || {},
   };
 }

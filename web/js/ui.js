@@ -60,6 +60,16 @@ export function setupUI(ctx) {
   btnCluster.onclick = () => setColor(false);
   btnLie.onclick = () => setColor(true);
 
+  // ---- 真·近邻连线（意大利面）开关 ----
+  const btnLinks = document.getElementById('btn-links');
+  let linksOn = false;
+  const setLinks = (on) => {
+    linksOn = on;
+    btnLinks.classList.toggle('active', on);
+    galaxy.toggleLinks(on);
+  };
+  btnLinks.onclick = () => setLinks(!linksOn);
+
   // ---- 一键测谎：切到 UMAP + 测谎色（汇报爆点）----
   document.getElementById('btn-reveal').onclick = () => {
     selectLayout(true);
@@ -85,6 +95,7 @@ export function setupUI(ctx) {
     document.getElementById('ro-focus').textContent = `失真 ${(s.avg * 100).toFixed(0)}% · ${s.count} 点`;
     ctx.focus?.(id);      // 让相机聚焦该聚类（main.js 提供）
     setColor(true);        // 聚焦时自动切测谎色，效果更明显
+    setLinks(true);        // 自动亮出真·近邻连线：看它的邻居在 UMAP 里被扯到哪
   };
 
   // ---- 实时检验：调本地后端 ----

@@ -93,6 +93,20 @@ def main():
     umap_trust = round(trustworthiness(X, umap3, k=args.knn), 3)
     print(f"  PCA 可信度 {pca_trust} | UMAP 可信度 {umap_trust}")
 
+    # ---- 真·近邻连线（①意大利面）：高维(768D)真邻居，PCA 短、UMAP 被扯长 ----
+    from sklearn.neighbors import NearestNeighbors
+    n_sample = min(360, topk)
+    sample_idx = np.linspace(0, topk - 1, n_sample).astype(int)
+    nn_hi = NearestNeighbors(n_neighbors=6).fit(X)
+    _, nb = nn_hi.kneighbors(X[sample_idx])
+    seen, links = set(), []
+    for s, i in enumerate(sample_idx):
+        for j in nb[s, 1:]:
+            a, b = (int(i), int(j)) if i < j else (int(j), int(i))
+            if (a, b) in seen:
+                continue
+            seen.add((a, b)); links.append([a, b])
+
     # 词频近似用 1/(id+1) 当大小权重（常见词更大更亮）
     size = (1.0 - ids / topk).astype(np.float32)
 
@@ -111,6 +125,7 @@ def main():
         "umap": [[round(float(v), 2) for v in p] for p in umap3],
         "distortion": [round(float(v), 3) for v in distortion],
         "size": [round(float(v), 3) for v in size],
+        "links": links,
     }
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:

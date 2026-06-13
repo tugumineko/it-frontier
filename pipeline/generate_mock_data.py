@@ -109,6 +109,7 @@ def build(n_points):
     umap_trust = round(0.45 + 0.45 * trust(umap_centers), 3) # 被打乱 → 低
 
     tokens, cluster, pca, umap, distortion, size = [], [], [], [], [], []
+    concept_pts = []  # 每点的概念坐标，仅在内存里用于算"真·近邻连线"
     per = max(1, n_points // K)
 
     for ci, (name, color, words) in enumerate(CLUSTERS):
@@ -116,6 +117,7 @@ def build(n_points):
             # 在概念空间里采一个点（决定它有多"靠边界"）
             jitter = [random.gauss(0, 0.06) for _ in range(8)]
             cpt = [concept_centers[ci][d] + jitter[d] for d in range(8)]
+            concept_pts.append(cpt)
             # 它离哪个"别的聚类"最近？越近 = 越在边界 = UMAP 越会误导它
             others = sorted((dist(cpt, concept_centers[j]), j) for j in range(K) if j != ci)
             d_near = others[0][0]
@@ -137,6 +139,25 @@ def build(n_points):
             distortion.append(round(dval, 3))
             size.append(round(random.random() ** 1.5, 3))  # 少量大星 + 多数小星
 
+    # —— 真·近邻连线（①意大利面）：采样若干点，连到它们在"概念空间"里的真邻居 ——
+    # 关键：这些邻居是"高维真实"的。PCA 里连线短、UMAP 里被扯成横跨全图的长线，
+    # 直观展示"本该相邻的概念被 UMAP 拆散" —— 这是热力图给不了的关系结构。
+    N = len(concept_pts)
+    n_sample = min(360, N)
+    step = max(1, N // n_sample)
+    sample_idx = list(range(0, N, step))[:n_sample]
+    k_link = 5
+    links = []
+    seen = set()
+    for i in sample_idx:
+        order = sorted(range(N), key=lambda j: dist(concept_pts[i], concept_pts[j]))
+        for j in order[1:k_link + 1]:
+            key = (i, j) if i < j else (j, i)
+            if key in seen:
+                continue
+            seen.add(key)
+            links.append([i, j])
+
     meta = {
         "source": "mock",
         "count": len(tokens),
@@ -145,7 +166,8 @@ def build(n_points):
         "notes": "合成数据：用于无 ML 依赖时演示与调试渲染；真实数据请用 export_embeddings.py 覆盖 galaxy.json",
     }
     return {"meta": meta, "tokens": tokens, "cluster": cluster,
-            "pca": pca, "umap": umap, "distortion": distortion, "size": size}
+            "pca": pca, "umap": umap, "distortion": distortion, "size": size,
+            "links": links}
 
 
 def main():
