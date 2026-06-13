@@ -38,11 +38,12 @@ export function normalizeGalaxy(raw) {
 
   const palette = (raw.meta?.clusters || []).map(c => c.color || [0.6, 0.7, 1.0]);
 
-  // 稳健分位归一化(2%/98%)：少数极端值不会把全图挤到色带一端，热力才准。
-  const rawD = raw.distortion.slice().sort((a, b) => a - b);
+  // distortion 是旧「测谎」方向的字段；词义星海方向不再需要，缺失时按 0 处理（兼容旧数据）。
+  const hasDist = Array.isArray(raw.distortion) && raw.distortion.length === n;
+  const rawD = hasDist ? raw.distortion.slice().sort((a, b) => a - b) : [0];
   const q = (p) => rawD[Math.min(rawD.length - 1, Math.max(0, Math.floor(p * (rawD.length - 1))))];
-  const lo = q(0.02), hi = q(0.98), span = (hi - lo) || 1;
-  const distortionRaw = new Float32Array(n);   // 原始失真(给 tooltip 显示)
+  const lo = hasDist ? q(0.02) : 0, hi = hasDist ? q(0.98) : 1, span = (hi - lo) || 1;
+  const distortionRaw = new Float32Array(n);
 
   for (let i = 0; i < n; i++) {
     pca[i * 3] = raw.pca[i][0];
@@ -59,8 +60,8 @@ export function normalizeGalaxy(raw) {
     clusterColor[i * 3 + 1] = col[1];
     clusterColor[i * 3 + 2] = col[2];
 
-    distortionRaw[i] = raw.distortion[i];
-    distortion[i] = Math.max(0, Math.min(1, (raw.distortion[i] - lo) / span));  // 稳健归一
+    distortionRaw[i] = hasDist ? raw.distortion[i] : 0;
+    distortion[i] = hasDist ? Math.max(0, Math.min(1, (raw.distortion[i] - lo) / span)) : 0;
     // 大小仅做轻微纹理变化(词频)，范围压窄，避免"大/亮"被误读为"可信"——失真只看颜色
     size[i] = 1.0 + 0.5 * (raw.size ? raw.size[i] : Math.random());
   }

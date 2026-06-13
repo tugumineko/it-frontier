@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>潜空间银河 · UMAP 测谎仪</title>
+  <title>词义星海 · 看模型怎么分辨一词多义</title>
   <link rel="icon" href="data:," />
   <link rel="stylesheet" href="./css/style.css" />
   <!--
     依赖说明：Three.js 完整 vendoring 到 ./vendor/three/，不依赖任何 CDN。
-    这样汇报现场断网也能跑（满足"无 API / 离线"硬约束）。
+    现场断网也能跑（满足无 API / 离线硬约束）。
   -->
   <script type="importmap">
   {
@@ -25,51 +25,31 @@
 
   <!-- 顶部标题与一句话立意 -->
   <header id="topbar">
-    <div class="title">潜空间银河 <span class="sub">· UMAP 测谎仪</span></div>
-    <div class="tagline">把模型内部的词向量画成星系，再证明——<b>越好看的聚类，越可能是降维算法编的</b>。</div>
+    <div class="title">词义星海 <span class="sub">· 看模型怎么分辨一词多义</span></div>
+    <div class="tagline">给一句话，看 GPT-2 把同一个词，按上下文放进<b>不同的意思区</b>。</div>
   </header>
 
   <!-- 右侧控制面板 -->
   <aside id="panel">
     <section class="grp">
-      <h3>布局 Layout</h3>
-      <div class="row">
-        <button id="btn-pca" class="seg active">PCA（老实）</button>
-        <button id="btn-umap" class="seg">UMAP（戏精）</button>
-      </div>
-      <label class="slider-label">PCA ⇄ UMAP 渐变
-        <input id="morph" type="range" min="0" max="1" step="0.01" value="0" />
-      </label>
+      <h3>输入一句话</h3>
+      <textarea id="sentence-input" rows="2" placeholder="例如：I sat by the river bank watching the water"></textarea>
+      <button id="btn-locate" class="primary">▶ 投进星海</button>
+      <button id="btn-clear" class="seg" style="width:100%;margin-top:8px">✕ 清除探针</button>
+      <div class="hint" id="locate-status">现跑 GPT-2 取每个词的上下文向量，投到星海里并标出最近邻。需运行 server/app.py 并从 http://127.0.0.1:5000 打开。</div>
     </section>
 
     <section class="grp">
-      <h3>着色 Color</h3>
-      <div class="row">
-        <button id="btn-cluster" class="seg active">语义聚类</button>
-        <button id="btn-lie" class="seg">Turbo</button>
-        <button id="btn-viridis" class="seg">viridis</button>
-      </div>
-      <button id="btn-reveal" class="primary">⚡ 一键测谎（切 UMAP + 全局失真）</button>
-      <div class="legend" id="lie-legend" hidden>
-        <span>诚实</span>
-        <canvas id="cmap-legend" width="160" height="10"></canvas>
-        <span>编造</span>
-      </div>
-      <div class="hint" id="cmap-note" hidden>失真 = UMAP <b>全局距离</b>被编得多假，<b>只看颜色</b>（红/亮黄=越假）。辉光/大小只是星星观感，<b>不代表可信度</b>。UMAP 局部诚实、全局撒谎。</div>
-    </section>
-
-    <section class="grp">
-      <h3>关系揭示</h3>
-      <button id="btn-links" class="seg" style="width:100%">🔗 全局错配连线</button>
-      <label class="slider-label">只显错配 ≥
-        <input id="link-thresh" type="range" min="0" max="1" step="0.02" value="0.5" />
-      </label>
-      <div class="hint">高维距离 vs UMAP 距离<b>错配最大</b>的词对（红=错得越狠）。这些词高维上本该很远，UMAP 却画得很近（或反之）——<b>UMAP 的全局距离是假的</b>。这正是热力图给不了的"关系结构"。</div>
+      <h3>多义词案例</h3>
+      <select id="case-select">
+        <option value="-1">— 选一个多义词 —</option>
+      </select>
+      <div class="hint">选一个词，星海里标出它<b>两个义项</b>的落点，看它们分得多开。</div>
     </section>
 
     <section class="grp">
       <h3>展示</h3>
-      <button id="btn-focus" class="seg" style="width:100%">🎯 聚焦星系（弱化背景）</button>
+      <button id="btn-focus" class="seg" style="width:100%">🎯 聚焦星海（弱化背景）</button>
       <label class="slider-label">背景强度
         <input id="bg-intensity" type="range" min="0" max="1" step="0.02" value="1" />
       </label>
@@ -80,69 +60,40 @@
         <input id="pt-size" type="range" min="0.6" max="4" step="0.1" value="2" />
       </label>
     </section>
-
-    <section class="grp">
-      <h3>精选案例库</h3>
-      <select id="case-select">
-        <option value="-1">— 全部 —</option>
-      </select>
-      <div class="hint">挑"视觉最紧致、失真最高"的聚类，聚焦展示。</div>
-    </section>
-
-    <section class="grp">
-      <h3>数据集（实时生成 / 保存 / 导入）</h3>
-      <textarea id="live-input" rows="2" placeholder="给一段话 / 一串词，回车现跑 GPT-2，重新生成一套星系…"></textarea>
-      <button id="btn-live" class="primary">▶ 现场生成新星系</button>
-      <div class="row" style="margin-top:8px">
-        <button id="btn-save" class="seg">💾 保存</button>
-        <button id="btn-import" class="seg">📂 导入</button>
-        <button id="btn-default" class="seg">🌌 主银河</button>
-      </div>
-      <input id="file-import" type="file" accept="application/json,.json" hidden />
-      <div class="hint" id="live-status">现场生成需运行 server/app.py 并从 http://127.0.0.1:5000 打开。保存/导入/主银河 离线即可用。</div>
-    </section>
   </aside>
 
   <!-- 左下角读数面板 -->
   <div id="readout">
-    <div class="ro-row"><span>点数</span><b id="ro-count">—</b></div>
-    <div class="ro-row"><span>当前布局</span><b id="ro-layout">PCA</b></div>
-    <div class="ro-row"><span>局部可信度 (保近邻)</span><b id="ro-trust">—</b></div>
-    <div class="ro-row"><span>全局保真 (保距离)</span><b id="ro-global">—</b></div>
-    <div class="ro-row" id="ro-focus-wrap" hidden><span id="ro-focus-name">聚类</span><b id="ro-focus">—</b></div>
+    <div class="ro-row"><span>底图词数</span><b id="ro-count">—</b></div>
+    <div class="ro-row"><span>表示</span><b>第 9 层上下文向量</b></div>
   </div>
+
+  <!-- 探针文字标签层（输入句子 / 案例义项的词，浮在星点上）-->
+  <div id="probe-labels"></div>
 
   <!-- hover 词卡（屏幕投影拾取，单实例复用）-->
   <div id="tooltip" hidden></div>
 
-  <!-- 顶部模式指示：自由观察 / 聚焦:词 -->
+  <!-- 顶部模式指示 -->
   <div id="mode"><span>自由观察</span></div>
 
-  <!-- 选中词卡（单击选择，相机不动；含飞入/取消）-->
+  <!-- 选中词卡 / 探针信息卡 -->
   <div id="selcard" hidden></div>
 
-  <!-- 底部操作提示条（首次显示数秒后淡出，? 可再唤出）-->
+  <!-- 底部操作提示条 -->
   <div id="hintbar">
     <span>拖拽 = 旋转</span><span>滚轮 = 缩放</span><span>右键 = 平移</span>
     <span>单击 = 看词</span><span>双击 = 飞入</span><span>ESC = 复位</span>
   </div>
   <button id="hint-toggle" title="操作提示">?</button>
 
-  <!-- 右下角 研究图 HUD（测谎铁证）-->
-  <div id="charts">
-    <div class="ch-head">
-      <span>测谎铁证</span>
-      <button id="ch-toggle" class="seg" style="padding:2px 8px;font-size:11px">展开</button>
-    </div>
-    <div id="ch-body" hidden>
-      <div class="ch-title">Shepard 图：高维距离 → 低维距离
-        <span class="ch-seg"><button id="shep-pca" class="seg">PCA</button><button id="shep-umap" class="seg active">UMAP</button></span>
-      </div>
-      <canvas id="shepard" width="240" height="160"></canvas>
-      <div class="ch-cap" id="shep-cap">UMAP：点散成一团 = 全局距离基本没意义（在撒谎）。</div>
-      <div class="ch-title" style="margin-top:10px">全局失真分布（按词数）</div>
-      <canvas id="histogram" width="240" height="90"></canvas>
-    </div>
+  <!-- A：逐层义项可分度曲线 HUD（拖层滑块看义项随层分开 / 塌缩）-->
+  <div id="insight" hidden>
+    <div class="ins-title" id="insight-title">逐层义项可分度</div>
+    <canvas id="sep-curve" width="240" height="104"></canvas>
+    <div class="ins-readout" id="sep-readout"></div>
+    <input id="layer-slider" type="range" min="0" max="12" step="1" value="9" />
+    <div class="ins-cap">第 0 层接近静态词向量、义项几乎重合；中间层分得最开；顶层偏向预测下一个词，又塌回去。</div>
   </div>
 
   <div id="loading">正在点亮星系…</div>

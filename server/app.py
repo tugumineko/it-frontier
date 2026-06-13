@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-app.py —— 本地实时后端：托管前端 + 提供 /api/embed（把老师的新输入投进同一星系）。
+app.py —— 词义星海的本地后端：托管前端 + /api/locate。
 
-两种运行模式（自动选择）：
-  · real 模式：检测到 ML 依赖 + 已运行 export_embeddings.py 生成的 projector.joblib，
-               则真的加载 GPT-2，把新词向量用同一套 PCA/UMAP 投影器投到星系里。
-               —— 这就是你跟老师说的"现场给任意输入、我现跑给您看"的真实能力。
-  · mock 模式：没有 ML 依赖也没关系，用 galaxy.sample.json 的聚类中心把输入词
-               散成亮星，纯粹让"实时检验"这条交互链路在骨架阶段就能跑通、好调试。
+/api/locate 是核心：给一句话，对句子里的每个词取 GPT-2 第 N 层的上下文向量，
+用 export_semantic_galaxy.py 训练的同一投影器投进固定的语义星海，并查最近邻底图词。
+同一个多义词在不同句子里取到的上下文向量不同，落点也不同，这就是一词多义的呈现。
+
+两种模式（自动选择）：
+  · real：加载 GPT-2 + projector.joblib，真的现跑取上下文向量。
+  · mock：没有 ML 依赖时，把词散布到星海，纯粹让交互链路能跑通。
 
 启动：
-    pip install -r server/requirements.txt   # 至少要 flask；real 模式还需 pipeline 的依赖
-    python server/app.py                      # 然后浏览器开 http://127.0.0.1:5000
+    pip install -r server/requirements.txt
+    python server/app.py        # 浏览器开 http://127.0.0.1:5000
 现场完全本地、不连任何外部 API。
 """
 
@@ -29,9 +30,7 @@ WEB = os.path.join(HERE, "..", "web")
 DATA = os.path.join(WEB, "data")
 
 app = Flask(__name__, static_folder=None)
-
-# ---------- 尝试进入 real 模式 ----------
-REAL = None  # 成功则是一个 dict，存模型与投影器
+REAL = None   # 成功则是一个 dict，存模型与投影器
 
 
 def try_load_real():
@@ -39,30 +38,17 @@ def try_load_real():
     if not os.path.exists(bundle):
         return None
     try:
-        import numpy as np, joblib
+        import numpy as np, joblib, torch
         from transformers import GPT2Model, GPT2TokenizerFast
-        from sklearn.neighbors import NearestNeighbors
-
         b = joblib.load(bundle)
         tok = GPT2TokenizerFast.from_pretrained(b["model"])
-        model = GPT2Model.from_pretrained(b["model"])
-        wte = model.get_input_embeddings().weight.detach().cpu().numpy()
-
-        # 加载星系参考（用于给新点估失真：落在多"红"的区域）
-        with open(os.path.join(DATA, "galaxy.json"), encoding="utf-8") as f:
-            g = json.load(f)
-        umap_ref = np.asarray(g["umap"], dtype=np.float32)
-        dist_ref = np.asarray(g["distortion"], dtype=np.float32)
-        nn = NearestNeighbors(n_neighbors=min(15, len(umap_ref))).fit(umap_ref)
-
-        # 词表近邻索引（用于 /api/generate 把输入词扩成"邻域星系"）：top VOCAB 个常见词的余弦近邻
-        VOCAB = min(20000, wte.shape[0])
-        wte_norm = wte[:VOCAB] / (np.linalg.norm(wte[:VOCAB], axis=1, keepdims=True) + 1e-8)
-        vocab_nn = NearestNeighbors(n_neighbors=9, metric="cosine").fit(wte[:VOCAB])
-
-        print("✓ real 模式：GPT-2 + 投影器 + 词表近邻索引已加载")
-        return {"np": np, "tok": tok, "wte": wte, "b": b, "nn": nn, "dist_ref": dist_ref,
-                "vocab_nn": vocab_nn, "vocab": VOCAB}
+        if tok.pad_token is None:
+            tok.pad_token = tok.eos_token
+        model = GPT2Model.from_pretrained(b["model"]).eval()
+        base_index = {w.lower(): i for i, w in enumerate(b["base_tokens"])}
+        print(f"✓ real 模式：GPT-2 + 第 {b['layer']} 层投影器已加载，底图 {len(b['base_tokens'])} 词")
+        return {"np": np, "torch": torch, "tok": tok, "model": model,
+                "b": b, "base_index": base_index}
     except Exception as e:
         print(f"· real 模式不可用（{e.__class__.__name__}: {e}），回退 mock")
         return None
@@ -75,189 +61,91 @@ def _apply_norm(X, p):
     return (X / p["r"]) * p["scale"]
 
 
-def embed_real(text):
-    np = REAL["np"]; tok = REAL["tok"]; wte = REAL["wte"]; b = REAL["b"]
-    apply_normalizer = _apply_norm
-    ids = tok.encode(text)[:64]
-    if not ids:
+def _split_words(tok, ids_list):
+    """按 GPT-2 词首 token（Ġ）把 token 序列切成词，返回 [(词, [token 下标])]。
+    这样既能正确合并子词，又能处理一句话里重复出现的同一个词。"""
+    raw = tok.convert_ids_to_tokens(ids_list)
+    groups = []
+    for i, rt in enumerate(raw):
+        if i == 0 or rt.startswith("Ġ"):
+            groups.append([i])
+        else:
+            groups[-1].append(i)
+    return [(tok.decode([ids_list[j] for j in g]).strip(), g) for g in groups]
+
+
+def locate_real(text):
+    np = REAL["np"]; torch = REAL["torch"]; tok = REAL["tok"]; model = REAL["model"]; b = REAL["b"]
+    layer = b["layer"]; nn = b["nn"]; base_tokens = b["base_tokens"]
+    enc = tok(text, return_tensors="pt", truncation=True, max_length=64)
+    ids_list = enc["input_ids"][0].tolist()
+    if not ids_list:
         return []
-    X = wte[np.asarray(ids)]
-    pca3 = apply_normalizer(b["pca"].transform(X), b["pca_norm"])
-    umap3 = apply_normalizer(b["umap"].transform(X), b["umap_norm"])
-    # 失真：新点在 UMAP 空间落点附近的星系点平均失真
-    d_idx = REAL["nn"].kneighbors(umap3, return_distance=False)
-    dvals = REAL["dist_ref"][d_idx].mean(axis=1)
+    with torch.no_grad():
+        hs = model(**enc, output_hidden_states=True).hidden_states[layer][0]   # (seq, 768)
     out = []
-    for i, tid in enumerate(ids):
+    for w, idxs in _split_words(tok, ids_list):
+        if not any(ch.isalpha() for ch in w):          # 跳过纯标点
+            continue
+        v = hs[idxs].mean(dim=0).cpu().numpy().astype(np.float32)
+        v = (v / (np.linalg.norm(v) + 1e-8)).reshape(1, -1)
+        xyz = _apply_norm(b["pca"].transform(v), b["pca_norm"])[0]
+        uvw = _apply_norm(b["umap"].transform(v), b["umap_norm"])[0]
+        _, idx = nn.kneighbors(v, n_neighbors=8)
+        neighbors = [base_tokens[i] for i in idx[0] if base_tokens[i].lower() != w.lower()][:6]
         out.append({
-            "token": tok.decode([tid]).strip() or "·",
-            "pca": [round(float(v), 2) for v in pca3[i]],
-            "umap": [round(float(v), 2) for v in umap3[i]],
-            "distortion": round(float(dvals[i]), 3),
+            "word": w,
+            "pca": [round(float(t), 2) for t in xyz],
+            "umap": [round(float(t), 2) for t in uvw],
+            "neighbors": neighbors,
         })
     return out
 
 
-# ---------- mock 模式 ----------
+# ---------- mock 模式（无 ML 依赖时占位，保交互链路可跑）----------
 _MOCK = None
 
 
-def mock_galaxy():
+def _mock_base():
     global _MOCK
     if _MOCK is None:
-        path = os.path.join(DATA, "galaxy.sample.json")
-        with open(path, encoding="utf-8") as f:
-            _MOCK = json.load(f)
+        for name in ("galaxy.json", "galaxy.sample.json"):
+            p = os.path.join(DATA, name)
+            if os.path.exists(p):
+                with open(p, encoding="utf-8") as f:
+                    _MOCK = json.load(f)
+                break
     return _MOCK
 
 
-def embed_mock(text):
-    import statistics
-    g = mock_galaxy()
-    clusters = g["meta"]["clusters"]
-    K = len(clusters)
-    # 每个聚类的中心 + 平均失真（现算，骨架阶段够用）
-    centers = {i: {"pca": [0,0,0], "umap": [0,0,0], "n": 0, "dsum": 0.0} for i in range(K)}
-    for i in range(len(g["tokens"])):
-        c = g["cluster"][i]
-        for k in ("pca", "umap"):
-            for j in range(3):
-                centers[c][k][j] += g[k][i][j]
-        centers[c]["n"] += 1
-        centers[c]["dsum"] += g["distortion"][i]
-    for c in centers.values():
-        if c["n"]:
-            for k in ("pca", "umap"):
-                c[k] = [v / c["n"] for v in c[k]]
-            c["d"] = c["dsum"] / c["n"]
-        else:
-            c["d"] = 0.0
-
+def locate_mock(text):
+    g = _mock_base()
+    if not g:
+        return []
+    pts = g.get("umap") or g.get("pca")
+    toks = g["tokens"]
     out = []
-    for w in text.split()[:32]:
-        # 用词的哈希稳定地落到某个聚类，jitter 一下
-        cid = int(hashlib.md5(w.encode()).hexdigest(), 16) % K
-        c = centers[cid]
-        jit = lambda base, s: [base[j] + ((int(hashlib.md5((w+str(j)).encode()).hexdigest(),16)%1000)/1000-0.5)*s for j in range(3)]
-        out.append({
-            "token": w,
-            "pca": [round(v,2) for v in jit(c["pca"], 18)],
-            "umap": [round(v,2) for v in jit(c["umap"], 6)],
-            "distortion": round(c["d"], 3),
-        })
+    for w in text.split()[:40]:
+        if not any(ch.isalpha() for ch in w):
+            continue
+        i = int(hashlib.md5(w.encode()).hexdigest(), 16) % len(pts)
+        out.append({"word": w.strip(), "pca": pts[i], "umap": pts[i], "neighbors": [toks[i]]})
     return out
 
 
-# ---------- /api/generate：用输入词 + 其高维邻域，重新生成一整套星系 ----------
-def build_live_dataset(text):
-    np = REAL["np"]; tok = REAL["tok"]; wte = REAL["wte"]; VOCAB = REAL["vocab"]
-    import sys, colorsys
-    sys.path.insert(0, os.path.join(HERE, "..", "pipeline"))
-    from metrics import per_point_global_distortion, trustworthiness, global_fidelity, normalize_layout
-    from sklearn.decomposition import PCA
-    from sklearn.cluster import KMeans
-    import umap as _umap
-
-    ids = list(dict.fromkeys(tok.encode(text)))[:40]            # 去重、限 40 个查询词
-    if not ids:
-        return {"error": "输入无法编码"}
-    qset = set(ids)
-    Q = wte[np.asarray(ids)]
-    Q = Q / (np.linalg.norm(Q, axis=1, keepdims=True) + 1e-8)
-    _, nb = REAL["vocab_nn"].kneighbors(Q)                      # 每个查询词的高维近邻(索引=token id)
-    for row in nb:
-        for j in row[1:]:
-            qset.add(int(j))
-    ids_all = list(qset)
-    if len(ids_all) < 240:                                      # 点太少 UMAP 没结构 → 补常见词上下文
-        step = max(1, VOCAB // 300)
-        for t in range(0, VOCAB, step):
-            if t not in qset:
-                ids_all.append(t)
-            if len(ids_all) >= 280:
-                break
-    ids_all = ids_all[:700]
-    n = len(ids_all)
-    arr = np.asarray(ids_all)
-    X = wte[arr].astype(np.float32)
-    tokens = [tok.decode([int(t)]).strip() or "·" for t in ids_all]
-
-    pca3 = PCA(n_components=3, random_state=42).fit_transform(X)
-    kum = min(15, max(5, n // 8))
-    umap3 = _umap.UMAP(n_components=3, n_neighbors=kum, min_dist=0.1, metric="cosine", random_state=42).fit_transform(X)
-    pca3, _ = normalize_layout(pca3)
-    umap3, _ = normalize_layout(umap3)
-
-    distortion = per_point_global_distortion(X, umap3, n_ref=min(400, n))
-    kk = min(15, n - 1)
-    pca_trust = round(trustworthiness(X, pca3, k=kk), 3)
-    umap_trust = round(trustworthiness(X, umap3, k=kk), 3)
-    pca_global = round(global_fidelity(X, pca3, n_query=min(300, n)), 3)
-    umap_global = round(global_fidelity(X, umap3, n_query=min(300, n)), 3)
-
-    kc = min(8, max(2, n // 30))
-    cl = KMeans(n_clusters=kc, n_init=4, random_state=42).fit_predict(X)
-    palette = [list(colorsys.hsv_to_rgb(i / kc, 0.55, 1.0)) for i in range(kc)]
-
-    rng = np.random.default_rng(7)
-    Xn = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-8)
-    nP = min(2000, n * n)
-    li = rng.integers(0, n, nP); lj = rng.integers(0, n, nP)
-    keep = li != lj; li, lj = li[keep], lj[keep]
-    dh = 1.0 - (Xn[li] * Xn[lj]).sum(1); du = np.linalg.norm(umap3[li] - umap3[lj], axis=1)
-    hN = (dh - dh.min()) / (np.ptp(dh) + 1e-8); uN = (du - du.min()) / (np.ptp(du) + 1e-8)
-    mism = np.abs(hN - uN)
-    order = np.argsort(-mism)[:min(300, len(li))]
-    links = [[int(li[k]), int(lj[k])] for k in order]
-    link_score = [round(float(mism[k]), 3) for k in order]
-
-    si = rng.integers(0, n, min(500, n * 2)); sj = rng.integers(0, n, min(500, n * 2))
-    dHi = 1.0 - (Xn[si] * Xn[sj]).sum(1); dP = np.linalg.norm(pca3[si] - pca3[sj], axis=1); dU = np.linalg.norm(umap3[si] - umap3[sj], axis=1)
-    n01 = lambda a: (a - a.min()) / (np.ptp(a) + 1e-8)
-    shepard = {"dHi": [round(float(v), 3) for v in n01(dHi)],
-               "dPca": [round(float(v), 3) for v in n01(dP)],
-               "dUmap": [round(float(v), 3) for v in n01(dU)]}
-
-    size = [1.0 if int(t) in set(ids) else 0.45 for t in ids_all]   # 你的输入词大一点
-
-    return {
-        "meta": {"source": "live:" + text[:40], "count": n,
-                 "clusters": [{"id": i, "name": "簇" + str(i), "color": palette[i]} for i in range(kc)],
-                 "metrics": {"pca_trustworthiness": pca_trust, "umap_trustworthiness": umap_trust,
-                             "pca_global": pca_global, "umap_global": umap_global},
-                 "shepard": shepard,
-                 "notes": "实时生成：输入词 + 其高维邻域，重新 PCA/UMAP；输入词已放大"},
-        "tokens": tokens, "cluster": cl.tolist(),
-        "pca": [[round(float(v), 2) for v in p] for p in pca3],
-        "umap": [[round(float(v), 2) for v in p] for p in umap3],
-        "distortion": [round(float(v), 3) for v in distortion],
-        "size": size, "links": links, "link_score": link_score,
-    }
-
-
 # ---------- 路由 ----------
-@app.route("/api/generate", methods=["POST"])
-def api_generate():
+@app.route("/api/locate", methods=["POST"])
+def api_locate():
     text = (request.get_json(silent=True) or {}).get("text", "").strip()
     if not text:
-        return jsonify({"error": "empty"}), 400
-    if not REAL:
-        return jsonify({"error": "需要 real 模式：先 pip install -r pipeline/requirements.txt 并运行 export_embeddings.py 生成 projector.joblib"}), 503
-    try:
-        return jsonify(build_live_dataset(text))
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/embed", methods=["POST"])
-def api_embed():
-    text = (request.get_json(silent=True) or {}).get("text", "").strip()
-    if not text:
-        return jsonify({"points": [], "mode": "empty"})
+        return jsonify({"words": [], "mode": "empty"})
     if REAL:
-        return jsonify({"points": embed_real(text), "mode": "real"})
-    return jsonify({"points": embed_mock(text), "mode": "mock"})
+        try:
+            return jsonify({"words": locate_real(text), "mode": "real"})
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            return jsonify({"error": str(e)}), 500
+    return jsonify({"words": locate_mock(text), "mode": "mock"})
 
 
 @app.route("/")
@@ -272,7 +160,6 @@ def static_files(p):
 
 if __name__ == "__main__":
     REAL = try_load_real()
-    mode = "real（真·现跑 GPT-2）" if REAL else "mock（合成，骨架演示用）"
-    print(f"模式：{mode}")
+    print(f"模式：{'real（现跑 GPT-2 取上下文向量）' if REAL else 'mock（无 ML 依赖，散点占位）'}")
     print("打开 http://127.0.0.1:5000")
     app.run(host="127.0.0.1", port=5000, debug=False)

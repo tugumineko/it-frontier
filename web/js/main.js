@@ -11,7 +11,7 @@ import { loadGalaxyRaw, normalizeGalaxy } from './data.js';
 import { Galaxy } from './galaxy.js';
 import { World, BLOOM_LAYER } from './world.js';
 import { setupUI } from './ui.js';
-import { setupCharts } from './charts.js';
+import { setupInsight } from './insight.js';
 
 const GALAXY_SCALE = 2.6;
 
@@ -139,12 +139,18 @@ function focusCluster(id) {
 }
 
 // ---- 主流程：数据集可整体切换（实时生成 / 导入 / 主银河）----
-let galaxy = null, data = null, rawData = null, uiApi = null, chartsApi = null;
+let galaxy = null, data = null, rawData = null, uiApi = null;
+// 探针层状态：输入句子 / 案例义项投到星海，叠加在底图上（不改底图）
+const probeLayer = document.getElementById('probe-labels');
+const _ppv = new THREE.Vector3();
+let probeWords = [];
+let probeLabels = [];
+let insightApi = null;
 
 // 用一份(原始 schema)数据重建整个星系：dispose 旧的 → 建新的，保留当前视图状态。
 function applyGalaxyObj(raw) {
   const cm = galaxy ? galaxy.uniforms.uColorMode.value : 0;
-  const morph = galaxy ? galaxy.morph : 0;
+  const morph = galaxy ? galaxy.morph : 1;   // 默认 UMAP 布局（义项分得更开）
   const linksOn = galaxy ? galaxy._linksOn : false;
   if (galaxy) galaxy.dispose();
   rawData = raw;
@@ -158,13 +164,13 @@ function applyGalaxyObj(raw) {
   clusterCentroids = makeCentroids(data);
 }
 
-// 切换数据集（生成/导入/主银河共用）：重建 + 刷新 UI/图表 + 复位选择与相机模式。
+// 重载底图（仅"重置/主银河"用）：重建 + 刷新 UI + 复位选择/探针/相机模式。
 function setDataset(raw) {
   applyGalaxyObj(raw);
   cancelFlight();
+  if (typeof clearProbe === 'function') clearProbe();
   if (typeof deselect === 'function') deselect();
   if (uiApi) uiApi.refresh();
-  if (chartsApi) chartsApi.refresh(data);
   setMode('自由观察');
 }
 
@@ -179,23 +185,32 @@ function downloadJSON(obj, name) {
 const ctx = {
   get galaxy() { return galaxy; },
   get data() { return data; },
+  get cases() { return (data && data.meta && data.meta.cases) || []; },
   focus: focusCluster,
   setWorldIntensity: (v) => world.setWorldIntensity(v),
   setBackgroundVisible: (on) => { scene.background = on ? (world.bgTexture || null) : null; },
   setBloomStrength: (v) => { bloomPass.strength = v; },
   setPointScale: (v) => { galaxy.uniforms.uPointScale.value = v; },
-  saveData: () => downloadJSON(rawData, 'galaxy-data.json'),
-  importData: (obj) => setDataset(obj),                 // normalizeGalaxy 内部校验
   loadDefault: async () => { setDataset(await loadGalaxyRaw()); },
-  generate: async (text) => {
-    const res = await fetch('/api/generate', {
+  clearProbe: () => clearProbe(),
+  showCase: (c) => showCase(c),
+  // 把一句话投进星海：调后端取每个词的上下文向量与最近邻，渲染成探针点 + 句子轨迹。
+  locate: async (text) => {
+    const res = await fetch('/api/locate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }),
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const out = await res.json();
     if (out.error) throw new Error(out.error);
-    setDataset(out);
-    return { count: out.tokens.length };
+    const cases = (data && data.meta && data.meta.cases) || [];
+    const words = (out.words || []).map((w) => {
+      const o = { ...w, color: [1.0, 0.92, 0.5] };
+      const c = cases.find((cc) => cc.word.toLowerCase() === (w.word || '').toLowerCase());
+      if (c && c.senses && c.senses.length === 2 && w.umap) o.axis = senseAxisProj(w.umap, c);  // B/D
+      return o;
+    });
+    renderProbe(words, { trail: true });
+    return { count: words.length, mode: out.mode };
   },
 };
 
@@ -203,7 +218,7 @@ const ctx = {
   try {
     applyGalaxyObj(await loadGalaxyRaw());
     uiApi = setupUI(ctx);
-    chartsApi = setupCharts(data);
+    insightApi = setupInsight();
     controls.update();
     homeState = captureState();        // 锚定全景机位，供"返回总览/ESC"平滑飞回
     setMode('自由观察');
@@ -233,6 +248,7 @@ function animate() {
     if (k >= 1) { flight = null; controls.enabled = true; }
   }
   controls.update();
+  updateProbeLabels();
 
   // 选择性 bloom：先只渲发光层(黑背景) → 再渲完整场景(含星云背景)叠加
   const bg = scene.background;
@@ -265,9 +281,8 @@ const _pv = new THREE.Vector3();
 const escHtml = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 const tokenInfo = (i) => {
   const d = galaxy.data;
-  const cl = d.meta.clusters?.[d.cluster[i]]?.name || ('簇' + d.cluster[i]);
-  const dist = (d.distortionRaw ? d.distortionRaw[i] : d.distortion[i]);
-  return { token: d.tokens[i] || '·', cl, distPct: (dist * 100).toFixed(0) };
+  const cl = d.meta.clusters?.[d.cluster[i]]?.name || ('区 ' + d.cluster[i]);
+  return { token: d.tokens[i] || '·', cl };
 };
 function pickAt(mx, my) {
   if (!galaxy) return -1;
@@ -297,7 +312,7 @@ function select(i) {
   const info = tokenInfo(i);
   selcard.hidden = false;
   selcard.innerHTML = `<div class="tk">${escHtml(info.token)}</div>` +
-    `<div class="dv">${escHtml(info.cl)} · 全局失真 <b>${info.distPct}%</b></div>` +
+    `<div class="dv">所在区：${escHtml(info.cl)}</div>` +
     `<div class="row"><button id="sel-focus" class="seg">🎯 飞入(双击)</button><button id="sel-close" class="seg">✕ 取消(Esc)</button></div>`;
   document.getElementById('sel-focus').onclick = () => flyToPoint(wordWorldPos(i).clone(), 55);
   document.getElementById('sel-close').onclick = () => deselect();
@@ -330,7 +345,7 @@ function doHover() {
   tooltip.hidden = false;
   tooltip.style.left = (hoverX + 12) + 'px'; tooltip.style.top = (hoverY) + 'px';
   tooltip.innerHTML = `<div class="tk">${escHtml(info.token)}</div>` +
-    `<div class="dv">${escHtml(info.cl)} · 全局失真 <b>${info.distPct}%</b> · 双击飞入</div>`;
+    `<div class="dv">${escHtml(info.cl)} · 双击飞入</div>`;
 }
 el.addEventListener('pointerleave', () => { tooltip.hidden = true; });
 
@@ -368,6 +383,7 @@ el.addEventListener('dblclick', (e) => {
 window.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (selected >= 0) { deselect(); }
+  else if (probeWords.length) { clearProbe(); if (selcard) selcard.hidden = true; setMode('自由观察'); }
   else if (homeState) { if (galaxy.setSpin) galaxy.setSpin(true); flyToState(homeState); setMode('自由观察'); }
 });
 
@@ -380,3 +396,97 @@ hintToggle.onclick = () => {
   hintbar.classList.toggle('faded');
   if (!hintbar.classList.contains('faded')) hintTimer = setTimeout(() => hintbar.classList.add('faded'), 6000);
 };
+
+// ============ 探针层：把输入句子 / 案例义项投到星海（叠加，不改底图）============
+// 探针点在 galaxy.liveGroup 里渲染（发光），词的文字标签用 DOM 浮层，每帧投影到屏幕。
+function renderProbe(words, opts = {}) {
+  probeWords = words || [];
+  galaxy.setProbe(probeWords, opts);
+  galaxy.liveGroup.traverse((o) => { if (o.layers) o.layers.enable(BLOOM_LAYER); });   // 探针发光
+  if (probeLayer) probeLayer.innerHTML = '';
+  probeLabels = probeWords.map((p) => {
+    const el = document.createElement('div');
+    el.className = 'plabel' + (p.sense ? ' sense' : '');
+    el.textContent = p.sense ? `${p.word}·${p.sense.split(' ')[0]}` : p.word;
+    el.onpointerenter = () => showProbeInfo(p);
+    if (probeLayer) probeLayer.appendChild(el);
+    return el;
+  });
+  controls.autoRotate = false;
+  if (galaxy.setSpin) galaxy.setSpin(false);    // 暂停自转，探针不漂走
+  updateProbeLabels();
+}
+function clearProbe() {
+  probeWords = []; probeLabels = [];
+  if (probeLayer) probeLayer.innerHTML = '';
+  if (galaxy) galaxy.clearProbe();
+  if (insightApi) insightApi.hide();
+}
+// B：把一个落点投影到「义项 0 → 义项 1」轴上，得到 0~1 的倾向；D：偏离中点的程度=置信。
+function senseAxisProj(pt, c) {
+  const a = c.senses[0].uvw || c.senses[0].xyz, b = c.senses[1].uvw || c.senses[1].xyz;
+  const ax = [b[0]-a[0], b[1]-a[1], b[2]-a[2]];
+  const wv = [pt[0]-a[0], pt[1]-a[1], pt[2]-a[2]];
+  const len2 = ax[0]*ax[0] + ax[1]*ax[1] + ax[2]*ax[2] || 1;
+  let t = (wv[0]*ax[0] + wv[1]*ax[1] + wv[2]*ax[2]) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return { s0: c.senses[0].name, s1: c.senses[1].name, t, conf: Math.abs(2*t - 1) };
+}
+function updateProbeLabels() {
+  if (!probeWords.length || !galaxy || !probeLayer) return;
+  galaxy.liveGroup.updateMatrixWorld();
+  const mw = galaxy.liveGroup.matrixWorld;
+  const w = window.innerWidth, h = window.innerHeight;
+  const key = galaxy.morph > 0.5 ? 'umap' : 'pca';
+  for (let i = 0; i < probeWords.length; i++) {
+    const xyz = probeWords[i][key] || probeWords[i].pca;
+    _ppv.set(xyz[0], xyz[1], xyz[2]).applyMatrix4(mw).project(camera);
+    const el = probeLabels[i];
+    if (!el) continue;
+    if (_ppv.z > 1 || _ppv.z < -1) { el.style.display = 'none'; continue; }
+    el.style.display = '';
+    el.style.left = ((_ppv.x * 0.5 + 0.5) * w) + 'px';
+    el.style.top = ((-_ppv.y * 0.5 + 0.5) * h) + 'px';
+  }
+}
+function showProbeInfo(p) {
+  let axisHtml = '';
+  if (p.axis) {   // B/D：义项倾向读数 + 置信
+    const pct = Math.round(p.axis.t * 100);
+    const conf = p.axis.conf > 0.5 ? '较确定' : (p.axis.conf > 0.2 ? '中等' : '含糊');
+    axisHtml = `<div class="dv">义项倾向　<b style="color:#ffb066">${escHtml(p.axis.s0.split(' ')[0])} ${100 - pct}%</b> · <b style="color:#7fd0ff">${escHtml(p.axis.s1.split(' ')[0])} ${pct}%</b>（${conf}）</div>`;
+  }
+  selcard.hidden = false;
+  selcard.innerHTML = `<div class="tk">${escHtml(p.word)}</div>` +
+    `<div class="dv">${p.sense ? escHtml(p.sense) + ' · ' : ''}此处最近的词</div>` +
+    `<div class="nb">${(p.neighbors || []).map(escHtml).join(' · ') || '—'}</div>` +
+    axisHtml +
+    `<div class="row"><button id="sel-close" class="seg">✕ 清除(Esc)</button></div>`;
+  const b = document.getElementById('sel-close'); if (b) b.onclick = () => { clearProbe(); selcard.hidden = true; };
+}
+// 案例：同一个多义词的两个义项，用预算好的落点和两种颜色标出对比。
+function showCase(c) {
+  if (!c || !c.senses) return;
+  const cols = [[1.0, 0.55, 0.3], [0.4, 0.8, 1.0]];
+  const words = [];
+  c.senses.forEach((s, i) => {
+    words.push({ word: c.word, sense: s.name, neighbors: s.neighbors || [s.example],
+      pca: s.xyz, umap: s.uvw || s.xyz, color: cols[i % cols.length] });
+    // C：把该义项的最近邻底图词作为同色小星标出来，形成「两窝不同的邻居」
+    (s.neighbors || []).forEach((nb) => {
+      const idx = data.tokens.indexOf(nb);
+      if (idx < 0) return;
+      const dim = cols[i % cols.length].map((x) => x * 0.6 + 0.16);
+      words.push({ word: nb, neighbors: [`${c.word}「${s.name.split(' ')[0]}」义的邻居`],
+        pca: [data.pca[idx*3], data.pca[idx*3+1], data.pca[idx*3+2]],
+        umap: [data.umap[idx*3], data.umap[idx*3+1], data.umap[idx*3+2]], color: dim });
+    });
+  });
+  renderProbe(words, { trail: false });
+  selcard.hidden = false;
+  selcard.innerHTML = `<div class="tk">${escHtml(c.word)}</div>` +
+    c.senses.map((s, i) => `<div class="dv" style="color:${i ? '#7fd0ff' : '#ffb066'}">▶ ${escHtml(s.name)}<br><span style="color:var(--txt-dim)">${escHtml(s.example)}</span></div>`).join('') +
+    `<div class="row"><button id="sel-close" class="seg">✕ 清除(Esc)</button></div>`;
+  const b = document.getElementById('sel-close'); if (b) b.onclick = () => { clearProbe(); selcard.hidden = true; };
+  if (insightApi) insightApi.showCase(c);   // A：逐层可分度曲线
+}

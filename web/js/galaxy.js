@@ -2,8 +2,8 @@
 //
 // 设计要点（图形侧）：
 //   1) 单个 THREE.Points 渲染数万词向量点；PCA / UMAP 两套坐标都上 GPU，用 uMorph 在着色器里 mix，
-//      "从老实的 PCA 渐变到戏精的 UMAP"是 GPU 端实时插值，丝滑且零 CPU 开销。
-//   2) 着色两种：语义聚类色 / 失真测谎色（蓝→红）。
+//      从 PCA 到 UMAP 两套布局的渐变是 GPU 端实时插值，丝滑且零 CPU 开销。
+//   2) 着色两种：语义聚类色 / 全局重排热力色（蓝到红）。
 //   3) HDR 亮核 + 软晕 + 轻微 curl 漂移 + 呼吸闪烁 → 配合 UnrealBloom 出"会发光的星海"。
 //   4) Links（意大利面）：真·高维近邻连线。PCA 里短、UMAP 里被扯成横跨全图的长线，
 //      用"边结构"展示"本该相邻的概念被 UMAP 拆散" —— 这是热力图给不了的东西。
@@ -253,25 +253,54 @@ export class Galaxy {
   setSpin(on) { this._spin = on; }
   setLinkThreshold(t) { this.linkUniforms.uLinkThresh.value = t; }
 
-  setLivePoints(points) {
+  _probeSprite() {
+    if (this.__sprite) return this.__sprite;
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d');
+    const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grd.addColorStop(0, 'rgba(255,255,255,1)');
+    grd.addColorStop(0.3, 'rgba(255,255,255,0.85)');
+    grd.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grd; g.fillRect(0, 0, 64, 64);
+    this.__sprite = new THREE.CanvasTexture(c);
+    return this.__sprite;
+  }
+
+  // 探针：把一句话/一个义项的词投到星海里。每个 word = {word, pca, umap, color?}。
+  // opts.trail=true 时按词序连成轨迹线（句子模式）。
+  setProbe(words, opts = {}) {
     this.liveGroup.clear();
-    if (!points || !points.length) return;
-    const g = new THREE.BufferGeometry();
-    const pos = new Float32Array(points.length * 3);
-    const col = new Float32Array(points.length * 3);
-    for (let i = 0; i < points.length; i++) {
-      const p = points[i];
-      const xyz = this._morph > 0.5 ? p.umap : p.pca;
+    this._probe = words || [];
+    if (!words || !words.length) return;
+    const key = this._morph > 0.5 ? 'umap' : 'pca';
+    const pos = new Float32Array(words.length * 3);
+    const col = new Float32Array(words.length * 3);
+    for (let i = 0; i < words.length; i++) {
+      const xyz = words[i][key] || words[i].pca;
       pos[i*3] = xyz[0]; pos[i*3+1] = xyz[1]; pos[i*3+2] = xyz[2];
-      const d = p.distortion ?? 0;
-      col[i*3] = 1.0; col[i*3+1] = 1.0 - 0.7 * d; col[i*3+2] = 1.0 - 0.9 * d;
+      const c = words[i].color || [1.0, 0.92, 0.5];
+      col[i*3] = c[0]; col[i*3+1] = c[1]; col[i*3+2] = c[2];
     }
+    const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    const mat = new THREE.PointsMaterial({ size: 8, sizeAttenuation: true, vertexColors: true,
-      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+    const mat = new THREE.PointsMaterial({ size: 16, sizeAttenuation: true, vertexColors: true,
+      map: this._probeSprite(), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
     this.liveGroup.add(new THREE.Points(g, mat));
+    if (opts.trail && words.length > 1) {
+      const lp = new Float32Array((words.length - 1) * 2 * 3);
+      for (let i = 0; i < words.length - 1; i++) {
+        const a = words[i][key] || words[i].pca, b = words[i+1][key] || words[i+1].pca;
+        lp[i*6]=a[0]; lp[i*6+1]=a[1]; lp[i*6+2]=a[2];
+        lp[i*6+3]=b[0]; lp[i*6+4]=b[1]; lp[i*6+5]=b[2];
+      }
+      const lg = new THREE.BufferGeometry();
+      lg.setAttribute('position', new THREE.BufferAttribute(lp, 3));
+      this.liveGroup.add(new THREE.LineSegments(lg, new THREE.LineBasicMaterial({
+        color: 0x99bbff, transparent: true, opacity: 0.45, depthWrite: false, blending: THREE.AdditiveBlending })));
+    }
   }
+  clearProbe() { this.liveGroup.clear(); this._probe = []; }
 
   update(dt) {
     this._time += dt;
