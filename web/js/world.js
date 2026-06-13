@@ -44,7 +44,7 @@ const DOME_FRAG = /* glsl */`
 // 软圆点 + 乘性 fog 的通用片段/顶点工具（additive 友好）
 const STAR_VERT = /* glsl */`
   attribute float aSize; attribute float aSeed; attribute vec3 color;
-  uniform float uTime; uniform float uPixelRatio; uniform float uFog;
+  uniform float uTime; uniform float uPixelRatio; uniform float uFog; uniform float uDim;
   varying vec3 vCol; varying float vTw;
   void main(){
     vec4 mv = modelViewMatrix * vec4(position,1.0);
@@ -53,7 +53,7 @@ const STAR_VERT = /* glsl */`
     vTw = tw;
     gl_PointSize = clamp(aSize * uPixelRatio * (300.0 / -mv.z), 1.0, 12.0);
     float fog = exp(-uFog * (-mv.z));            // 乘性消光：远处淡出
-    vCol = color * fog;
+    vCol = color * fog * uDim;                   // uDim：背景强度
   }
 `;
 const STAR_FRAG = /* glsl */`
@@ -72,6 +72,8 @@ export class World {
     this.uTime = { value: 0 };
     this.uFog = { value: 0.00035 };               // 大气透视密度（乘性）
     this.uPR = { value: Math.min(window.devicePixelRatio, 2) };
+    this.uDim = { value: 1.0 };                    // 背景强度（弱化装饰层、突出语义星系）
+    this._coreBaseOpacity = 0.42;
     this._build();
   }
 
@@ -133,7 +135,7 @@ export class World {
       const rr = 260 + Math.random()*620, a = Math.random()*Math.PI*2;
       m.position.set(Math.cos(a)*rr, (Math.random()-0.5)*120, Math.sin(a)*rr);
       const s = 360 + Math.random()*360; m.scale.set(s, s, 1);
-      m.frustumCulled = false;
+      m.frustumCulled = false; m.renderOrder = 2;
       this.cores.push(m); this.scene.add(m);
     }
   }
@@ -168,7 +170,7 @@ export class World {
 
   _starMaterial(blending) {
     return new THREE.ShaderMaterial({
-      uniforms: { uTime: this.uTime, uPixelRatio: this.uPR, uFog: this.uFog },
+      uniforms: { uTime: this.uTime, uPixelRatio: this.uPR, uFog: this.uFog, uDim: this.uDim },
       vertexShader: STAR_VERT, fragmentShader: STAR_FRAG,
       transparent: true, depthWrite: false, blending,
     });
@@ -228,10 +230,10 @@ export class World {
     g.setAttribute('aSize',new THREE.BufferAttribute(siz,1));
     g.setAttribute('aSeed',new THREE.BufferAttribute(seed,1));
     const mat = new THREE.ShaderMaterial({
-      uniforms: { uTime: this.uTime, uPixelRatio: this.uPR, uFog: this.uFog },
+      uniforms: { uTime: this.uTime, uPixelRatio: this.uPR, uFog: this.uFog, uDim: this.uDim },
       vertexShader: /* glsl */`
         attribute float aSize; attribute vec3 color;
-        uniform float uTime; uniform float uPixelRatio; uniform float uFog;
+        uniform float uTime; uniform float uPixelRatio; uniform float uFog; uniform float uDim;
         varying vec3 vCol;
         void main(){
           vec3 p = position;
@@ -243,7 +245,7 @@ export class World {
           gl_Position = projectionMatrix * mv;
           gl_PointSize = clamp(aSize * uPixelRatio * (260.0 / -mv.z), 1.0, 8.0);
           float fog = exp(-uFog * (-mv.z));
-          vCol = color * fog;
+          vCol = color * fog * uDim;                  // uDim：背景强度
         }`,
       fragmentShader: /* glsl */`
         precision highp float; varying vec3 vCol;
@@ -276,7 +278,7 @@ export class World {
     g.setAttribute('position',new THREE.BufferAttribute(pos,3));
     g.setAttribute('aAlpha',new THREE.BufferAttribute(alp,1));
     const mat = new THREE.ShaderMaterial({
-      uniforms: { uTime: this.uTime, uPixelRatio: this.uPR },
+      uniforms: { uTime: this.uTime, uPixelRatio: this.uPR, uDim: this.uDim },
       vertexShader: /* glsl */`
         attribute float aAlpha;
         uniform float uTime; uniform float uPixelRatio;
@@ -291,15 +293,16 @@ export class World {
           vA = aAlpha;
         }`,
       fragmentShader: /* glsl */`
-        precision highp float; varying float vA;
+        precision highp float; varying float vA; uniform float uDim;
         void main(){
           float d = length(gl_PointCoord - 0.5);
-          float a = smoothstep(0.5, 0.12, d) * vA;
+          float a = smoothstep(0.5, 0.12, d) * vA * uDim;          // uDim：背景强度
           gl_FragColor = vec4(vec3(0.04,0.025,0.02), a);          // 暗红棕，NormalBlending 遮挡
         }`,
       transparent: true, depthWrite: false, blending: THREE.NormalBlending,
     });
-    const pts=new THREE.Points(g, mat); pts.frustumCulled=false; this.dust=pts; return pts;
+    const pts=new THREE.Points(g, mat); pts.frustumCulled=false; pts.renderOrder=1; // 在星盘之后，确保遮挡
+    this.dust=pts; return pts;
   }
 
   // ---- L4 银河核（唯一进 bloom 的发光源）----
@@ -314,6 +317,13 @@ export class World {
     const sp=new THREE.Sprite(mat); sp.scale.set(170,170,1);      // 别盖住中心的语义星系
     sp.layers.enable(BLOOM_LAYER);                                 // ★进 bloom
     this.core=sp; this.scene.add(sp);
+  }
+
+  // 背景强度 0..1：弱化装饰层(星野/星盘/尘埃/星云核)以突出语义星系；并联动背景明暗
+  setWorldIntensity(v) {
+    this.uDim.value = v;
+    if (this.cores) for (const m of this.cores) m.material.uniforms.uOpacity.value = this._coreBaseOpacity * v;
+    if (this.core) this.core.material.opacity = 0.7 * (0.4 + 0.6 * v);
   }
 
   update(dt, camera) {

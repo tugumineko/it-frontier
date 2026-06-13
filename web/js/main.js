@@ -112,10 +112,15 @@ let galaxy;
   try {
     const data = await loadGalaxy();
     galaxy = new Galaxy(scene, data);
-    for (const obj of [galaxy.points, galaxy.links, galaxy.liveGroup]) obj.scale.setScalar(GALAXY_SCALE);
+    for (const obj of [galaxy.points, galaxy.links, galaxy.liveGroup]) { obj.scale.setScalar(GALAXY_SCALE); obj.renderOrder = 3; }
     galaxy.points.layers.enable(BLOOM_LAYER);   // 词星核进 bloom（发光），但结构靠 base 仍清晰
     clusterCentroids = makeCentroids(data);
-    setupUI({ galaxy, data, focus: focusCluster });
+    setupUI({
+      galaxy, data, focus: focusCluster,
+      setWorldIntensity: (v) => world.setWorldIntensity(v),
+      setBackgroundVisible: (on) => { scene.background = on ? (world.bgTexture || null) : null; },
+      setBloomStrength: (v) => { bloomPass.strength = v; },
+    });
     document.getElementById('loading').classList.add('hidden');
   } catch (e) {
     document.getElementById('loading').textContent = '加载失败：' + e.message;

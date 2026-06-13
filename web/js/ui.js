@@ -122,4 +122,25 @@ export function setupUI(ctx) {
   };
   document.getElementById('btn-live').onclick = runLive;
   liveInput.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); runLive(); } };
+
+  // ---- 展示：背景强度 / 聚焦星系 / 辉光 ----
+  const bgSlider = document.getElementById('bg-intensity');
+  const bloomSlider = document.getElementById('bloom');
+  const btnFocus = document.getElementById('btn-focus');
+  bgSlider.oninput = () => {
+    const v = parseFloat(bgSlider.value);
+    ctx.setWorldIntensity?.(v);
+    ctx.setBackgroundVisible?.(v > 0.08);   // 调到很低时直接黑场，最大对比
+  };
+  bloomSlider.oninput = () => ctx.setBloomStrength?.(parseFloat(bloomSlider.value));
+  let focusOn = false;
+  btnFocus.onclick = () => {
+    focusOn = !focusOn;
+    btnFocus.classList.toggle('active', focusOn);
+    const v = focusOn ? 0.18 : 1.0;
+    bgSlider.value = v;
+    ctx.setWorldIntensity?.(v);
+    ctx.setBackgroundVisible?.(!focusOn);
+    if (focusOn) setLinks(true);             // 聚焦时亮出近邻连线，突出"星系连结"
+  };
 }
