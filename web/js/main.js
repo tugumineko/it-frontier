@@ -1,13 +1,18 @@
-// main.js — 启动入口：场景 / 相机 / 控制 / Bloom 后处理 / 动画循环
+// main.js — 启动入口：沉浸式世界 + 星系 + 相机 + Bloom/Vignette 后处理
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { VignetteShader } from 'three/addons/shaders/VignetteShader.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { loadGalaxy } from './data.js';
 import { Galaxy } from './galaxy.js';
+import { World } from './world.js';
 import { setupUI } from './ui.js';
+
+const GALAXY_SCALE = 2.6;   // 把语义星系放大，让相机能"置身其中"
 
 const app = document.getElementById('app');
 
@@ -15,39 +20,43 @@ const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.setClearColor(0x03040a, 1);
+renderer.setClearColor(0x02030a, 1);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.1;
+renderer.toneMappingExposure = 1.05;
 app.appendChild(renderer.domElement);
 
 // ---- 场景 / 相机 ----
 const scene = new THREE.Scene();
-scene.fog = new THREE.FogExp2(0x03040a, 0.0011);
 
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 4000);
-camera.position.set(0, 26, 210);
+const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 8000);
+camera.position.set(0, 38, 205);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
-controls.dampingFactor = 0.07;
-controls.minDistance = 5;
-controls.maxDistance = 1200;
-controls.autoRotate = true;        // 缓慢自动环绕，开场更"高级"
-controls.autoRotateSpeed = 0.25;
+controls.dampingFactor = 0.06;
+controls.minDistance = 2;
+controls.maxDistance = 1500;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.22;
 
-// ---- Bloom 后处理（发光星海的关键）----
+// ---- 沉浸式世界（星云穹顶 + 银河带星野 + 星云云团）----
+const world = new World(scene);
+
+// ---- Bloom + Vignette 后处理 ----
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(
   new THREE.Vector2(window.innerWidth, window.innerHeight),
-  0.95,   // strength
-  0.5,    // radius
-  0.12    // threshold（只让亮核发光）
+  0.9,    // strength
+  0.6,    // radius
+  0.20    // threshold（让星点/亮丝发光，星云底不过曝）
 );
 composer.addPass(bloom);
+const vignette = new ShaderPass(VignetteShader);
+vignette.uniforms.offset.value = 1.05;
+vignette.uniforms.darkness.value = 1.15;
+composer.addPass(vignette);
 composer.addPass(new OutputPass());
-
-addStardust(scene);
 
 // ---- 相机聚焦某聚类（案例库用）----
 let focusTarget = null;
@@ -59,10 +68,7 @@ function makeCentroids(data) {
   for (let i = 0; i < data.n; i++) {
     const c = data.cluster[i] | 0;
     if (!acc[c]) continue;
-    for (let j = 0; j < 3; j++) {
-      acc[c].pca[j] += data.pca[i*3+j];
-      acc[c].umap[j] += data.umap[i*3+j];
-    }
+    for (let j = 0; j < 3; j++) { acc[c].pca[j] += data.pca[i*3+j]; acc[c].umap[j] += data.umap[i*3+j]; }
     acc[c].n++;
   }
   acc.forEach(a => { if (a.n) for (const k of ['pca','umap']) for (let j=0;j<3;j++) a[k][j]/=a.n; });
@@ -73,7 +79,7 @@ function focusCluster(id) {
   if (id == null || !clusterCentroids) { focusTarget = null; controls.autoRotate = true; return; }
   const c = clusterCentroids[id]; if (!c) return;
   const p = galaxy.morph > 0.5 ? c.umap : c.pca;
-  focusTarget = { pos: new THREE.Vector3(p[0], p[1], p[2]), dist: 64 };
+  focusTarget = { pos: new THREE.Vector3(p[0], p[1], p[2]).multiplyScalar(GALAXY_SCALE), dist: 90 };
   controls.autoRotate = false;
 }
 
@@ -83,6 +89,8 @@ let galaxy;
   try {
     const data = await loadGalaxy();
     galaxy = new Galaxy(scene, data);
+    // 放大语义星系，让相机置身其中
+    for (const obj of [galaxy.points, galaxy.links, galaxy.liveGroup]) obj.scale.setScalar(GALAXY_SCALE);
     clusterCentroids = makeCentroids(data);
     setupUI({ galaxy, data, focus: focusCluster });
     document.getElementById('loading').classList.add('hidden');
@@ -100,6 +108,7 @@ function animate() {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
 
+  world.update(dt);
   if (galaxy) galaxy.update(dt);
 
   if (focusTarget) {
@@ -113,24 +122,6 @@ function animate() {
   composer.render();
 }
 animate();
-
-// ---- 背景星尘 ----
-function addStardust(scene) {
-  const N = 2000;
-  const pos = new Float32Array(N * 3);
-  for (let i = 0; i < N; i++) {
-    const r = 600 + Math.random() * 1600;
-    const t = Math.random() * Math.PI * 2;
-    const p = Math.acos(2 * Math.random() - 1);
-    pos[i*3] = r * Math.sin(p) * Math.cos(t);
-    pos[i*3+1] = r * Math.sin(p) * Math.sin(t);
-    pos[i*3+2] = r * Math.cos(p);
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  const m = new THREE.PointsMaterial({ color: 0x3a4a72, size: 1.1, sizeAttenuation: true, transparent: true, opacity: 0.55 });
-  scene.add(new THREE.Points(g, m));
-}
 
 // ---- 自适应 ----
 window.addEventListener('resize', () => {
