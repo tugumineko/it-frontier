@@ -86,6 +86,18 @@ finalComposer.addPass(new OutputPass());
 // ---- 相机聚焦某聚类（案例库用）----
 let focusTarget = null;
 let clusterCentroids = null;
+let focusedPoint = -1;   // 聚焦的词索引（点击拾取），-1=未聚焦词
+
+// 某个词当前的世界坐标（lerp(pca,umap,morph) 经星系矩阵）
+const _v = new THREE.Vector3();
+function wordWorldPos(i) {
+  const d = galaxy.data, m = galaxy.morph;
+  return _v.set(
+    d.pca[i*3]*(1-m)+d.umap[i*3]*m,
+    d.pca[i*3+1]*(1-m)+d.umap[i*3+1]*m,
+    d.pca[i*3+2]*(1-m)+d.umap[i*3+2]*m
+  ).applyMatrix4(galaxy.points.matrixWorld);
+}
 
 function makeCentroids(data) {
   const clusters = data.meta.clusters || [];
@@ -99,6 +111,7 @@ function makeCentroids(data) {
   return acc;
 }
 function focusCluster(id) {
+  focusedPoint = -1;
   if (id == null || !clusterCentroids) { focusTarget = null; controls.autoRotate = true; return; }
   const c = clusterCentroids[id]; if (!c) return;
   const p = galaxy.morph > 0.5 ? c.umap : c.pca;
@@ -139,6 +152,12 @@ function animate() {
   world.update(dt, camera);
   if (galaxy) galaxy.update(dt);
 
+  // 聚焦某个词：让目标点随星系自转持续居中
+  if (focusedPoint >= 0 && galaxy && focusTarget) {
+    galaxy.points.updateMatrixWorld();
+    focusTarget.pos.copy(wordWorldPos(focusedPoint));
+  }
+
   if (focusTarget) {
     controls.target.lerp(focusTarget.pos, dt * 1.8);
     const dir = camera.position.clone().sub(controls.target).normalize();
@@ -165,4 +184,49 @@ window.addEventListener('resize', () => {
   renderer.setSize(w, h);
   bloomComposer.setSize(w, h);
   finalComposer.setSize(w, h);
+});
+
+// ---- 拾取：屏幕投影最近点（兼容 GPU morph/缩放/自转，比 raycaster 更稳）----
+const tooltip = document.getElementById('tooltip');
+const _pv = new THREE.Vector3();
+function pickAt(mx, my) {
+  if (!galaxy) return -1;
+  galaxy.points.updateMatrixWorld();
+  const d = galaxy.data, m = galaxy.morph;
+  const w = window.innerWidth, h = window.innerHeight, mw = galaxy.points.matrixWorld;
+  let best = -1, bestD = 16 * 16;   // 16px 命中阈值
+  for (let i = 0; i < d.n; i++) {
+    _pv.set(d.pca[i*3]*(1-m)+d.umap[i*3]*m, d.pca[i*3+1]*(1-m)+d.umap[i*3+1]*m, d.pca[i*3+2]*(1-m)+d.umap[i*3+2]*m)
+       .applyMatrix4(mw).project(camera);
+    if (_pv.z > 1) continue;        // 在相机后方
+    const sx = (_pv.x*0.5+0.5)*w, sy = (-_pv.y*0.5+0.5)*h;
+    const dx = sx-mx, dy = sy-my, dd = dx*dx+dy*dy;
+    if (dd < bestD) { bestD = dd; best = i; }
+  }
+  return best;
+}
+function esc(s){ return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+let lastPick = 0;
+renderer.domElement.addEventListener('pointermove', (e) => {
+  const now = performance.now(); if (now - lastPick < 30) return; lastPick = now;
+  const i = pickAt(e.clientX, e.clientY);
+  if (i < 0) { tooltip.hidden = true; return; }
+  const d = galaxy.data;
+  const cl = d.meta.clusters?.[d.cluster[i]]?.name || ('簇' + d.cluster[i]);
+  const dist = (d.distortionRaw ? d.distortionRaw[i] : d.distortion[i]);
+  tooltip.hidden = false;
+  tooltip.style.left = e.clientX + 'px'; tooltip.style.top = e.clientY + 'px';
+  tooltip.innerHTML = `<div class="tk">${esc(d.tokens[i] || '·')}</div>` +
+    `<div class="dv">${esc(cl)} · 全局失真 <b>${(dist*100).toFixed(0)}%</b></div>`;
+});
+renderer.domElement.addEventListener('pointerleave', () => { tooltip.hidden = true; });
+
+renderer.domElement.addEventListener('click', (e) => {
+  const i = pickAt(e.clientX, e.clientY);
+  if (i < 0) return;
+  focusedPoint = i;
+  focusTarget = { pos: wordWorldPos(i).clone(), dist: 55 };
+  controls.autoRotate = false;
+  galaxy.setHighlight(galaxy.data.cluster[i]);   // 高亮同簇，压暗其余(focus+context)
 });

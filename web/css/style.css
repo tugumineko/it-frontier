@@ -122,6 +122,24 @@ textarea { margin-bottom: 8px; }
 .ro-row { display: flex; justify-content: space-between; gap: 18px; padding: 3px 0; color: var(--txt-dim); }
 .ro-row b { color: var(--txt); font-weight: 600; }
 
+/* hover 词卡 */
+#tooltip {
+  position: fixed;
+  z-index: 30;
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - 14px));
+  background: rgba(8, 11, 22, 0.92);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.55);
+}
+#tooltip .tk { font-size: 14px; font-weight: 700; color: #fff; }
+#tooltip .dv { margin-top: 3px; color: var(--txt-dim); }
+#tooltip .dv b { color: #ffd36b; }
+
 /* 加载提示 */
 #loading {
   position: fixed; inset: 0;
