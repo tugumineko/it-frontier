@@ -118,13 +118,30 @@ function selectTok(id) {
   codeView.querySelectorAll('.tk.hot, .cl.hot-line').forEach((e) => e.classList.remove('hot', 'hot-line'));
   const span = codeView.querySelector(`.tk[data-tok="${id}"]`);
   if (span) { span.classList.add('hot'); span.closest('.cl')?.classList.add('hot-line'); span.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+  renderJudgeCard(t);
+  // 标识符的解释按需生成：点了才调 LLM 解释这一个（~2 秒），不在分析时一次性解释全部
+  if (t.cat === 'identifier' && t.explain == null && !t._loading) {
+    t._loading = true; renderJudgeCard(t);
+    fetchExplain(t).then((ex) => { t.explain = ex || '（暂无解释）'; t._loading = false; if (selected === id) renderJudgeCard(t); })
+      .catch(() => { t._loading = false; });
+  }
+}
+
+function renderJudgeCard(t) {
   const cat = (data.meta.categories || []).find((c) => c.key === t.cat);
+  const exHtml = t.explain != null ? esc(t.explain) : (t._loading ? '正在让 ecnu-max 解释…' : '（符号）');
   selcard.hidden = false;
   selcard.innerHTML = `<div class="tk">${esc(t.text)}</div>` +
     `<div class="cat" style="color:${cat ? rgb(cat.color) : '#ccc'}">${cat ? cat.name : t.cat}${t.weight > 1 ? ` · 出现 ${t.weight} 次` : ''}</div>` +
-    `<div class="ex">${esc(t.explain || '（符号）')}</div>` +
+    `<div class="ex">${exHtml}</div>` +
     `<div class="row"><button id="sel-close" class="seg">✕ 关闭(Esc)</button></div>`;
   document.getElementById('sel-close').onclick = () => { selcard.hidden = true; selected = -1; };
+}
+
+async function fetchExplain(t) {
+  const res = await fetch('/api/explain', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: data.meta.code, text: t.text, line: t.line }) });
+  const out = await res.json().catch(() => ({}));
+  return out.explain;
 }
 
 window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { selcard.hidden = true; selected = -1; } });

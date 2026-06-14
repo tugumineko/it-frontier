@@ -13,7 +13,7 @@ app.py — 初学者代码词义教学工具后端：托管前端 + /api/analyze
 没有 ECNU 凭据时仍能做词法分类（lexer 不需 API），只是没有 LLM 的逐词解释。
 """
 
-import os, json, sys, urllib.request
+import os, json, re, sys, urllib.request
 from collections import Counter
 from flask import Flask, request, jsonify, send_from_directory
 
@@ -151,13 +151,11 @@ def analyze(code, lang):
     for i, t in enumerate(toks):
         t["id"] = i
         t["weight"] = freq[t["text"]]
-    targets = [t for t in toks if t["cat"] == "identifier"]   # 只让 LLM 解释标识符；关键字用固定字典
-    ex = llm_explain(code, targets)
     for t in toks:
-        if t["cat"] == "identifier":
-            t["explain"] = ex.get((t["text"], t["line"])) or None
-        elif t["cat"] == "keyword":
+        if t["cat"] == "keyword":
             t["explain"] = KW_HINT.get(t["text"], "关键字")
+        elif t["cat"] == "identifier":
+            t["explain"] = None   # 标识符按需解释（/api/explain），避免分析时一次性解释全部、干等几十秒
         else:
             t["explain"] = static_explain(t)
     counts = {c["key"]: sum(1 for t in toks if t["cat"] == c["key"]) for c in CATEGORIES}
@@ -178,6 +176,35 @@ def api_analyze():
     except Exception as e:
         import traceback; traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/explain", methods=["POST"])
+def api_explain():
+    b = request.get_json(silent=True) or {}
+    code = (b.get("code") or "").strip()
+    text = (b.get("text") or "").strip()
+    line = b.get("line")
+    if not code or not text:
+        return jsonify({"explain": None}), 400
+    if not SEC or not SEC.get("api_key"):
+        return jsonify({"explain": None})
+    try:
+        numbered = "\n".join(f"{i+1}: {l}" for i, l in enumerate(code.split("\n")))
+        sys_msg = ("你是面向编程初学者的代码讲解助手。只解释用户指定的那一个标识符是什么、起什么作用，"
+                   "禁止修改代码、禁止评价或改进代码、禁止给任何建议。")
+        prompt = (f"代码：\n{numbered}\n\n用一句不超过 25 字的大白话，解释第 {line} 行的标识符 `{text}` "
+                  f"在这段代码里是什么、起什么作用。只输出 JSON：{{\"explain\":\"...\"}}")
+        req = urllib.request.Request(SEC["base_url"].rstrip("/") + "/chat/completions",
+            data=json.dumps({"model": SEC["chat_model"],
+                             "messages": [{"role": "system", "content": sys_msg}, {"role": "user", "content": prompt}]}).encode("utf-8"),
+            method="POST", headers={"Authorization": "Bearer " + SEC["api_key"], "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=40) as r:
+            content = json.loads(r.read().decode("utf-8"))["choices"][0]["message"]["content"]
+        m = re.search(r"\{.*\}", content, re.S)
+        explain = (json.loads(m.group()).get("explain") if m else content.strip())
+        return jsonify({"explain": (explain or "").strip()[:80]})
+    except Exception as e:
+        return jsonify({"explain": None, "error": str(e)})
 
 
 @app.route("/")
