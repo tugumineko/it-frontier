@@ -1,5 +1,5 @@
 // main.js — 2D 代码词法地图：分析代码 → 四区 token 点 + 词法轨迹 + 代码面板 + 语义卡，点选联动。
-import { setupUI } from './ui.js';
+import { setupUI } from './ui.js?v=3';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 const mapSvg = document.getElementById('map');
@@ -118,18 +118,26 @@ function selectTok(id) {
   codeView.querySelectorAll('.tk.hot, .cl.hot-line').forEach((e) => e.classList.remove('hot', 'hot-line'));
   const span = codeView.querySelector(`.tk[data-tok="${id}"]`);
   if (span) { span.classList.add('hot'); span.closest('.cl')?.classList.add('hot-line'); span.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
-  renderJudgeCard(t);
-  // 标识符的解释按需生成：点了才调 LLM 解释这一个（~2 秒），不在分析时一次性解释全部
   if (t.cat === 'identifier' && t.explain == null && !t._loading) {
-    t._loading = true; renderJudgeCard(t);
-    fetchExplain(t).then((ex) => { t.explain = ex || '（暂无解释）'; t._loading = false; if (selected === id) renderJudgeCard(t); })
+    t._loading = true;
+    fetchExplain(t).then((ex) => { t.explain = ex || t.quick || '（暂无解释）'; t._loading = false; if (selected === id) renderJudgeCard(t); })
       .catch(() => { t._loading = false; });
   }
+  renderJudgeCard(t);
 }
 
 function renderJudgeCard(t) {
   const cat = (data.meta.categories || []).find((c) => c.key === t.cat);
-  const exHtml = t.explain != null ? esc(t.explain) : (t._loading ? '正在让 ecnu-max 解释…' : '（符号）');
+  let exHtml;
+  if (t.explain != null) {
+    exHtml = esc(t.explain);
+  } else if (t._loading && t.quick) {
+    exHtml = `${esc(t.quick)} <span class="deep">· agent 深层解释中…</span>`;
+  } else if (t._loading) {
+    exHtml = '<span class="deep">正在让 ecnu-max 解释…</span>';
+  } else {
+    exHtml = t.quick ? esc(t.quick) : '（符号）';
+  }
   selcard.hidden = false;
   selcard.innerHTML = `<div class="tk">${esc(t.text)}</div>` +
     `<div class="cat" style="color:${cat ? rgb(cat.color) : '#ccc'}">${cat ? cat.name : t.cat}${t.weight > 1 ? ` · 出现 ${t.weight} 次` : ''}</div>` +

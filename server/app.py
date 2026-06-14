@@ -66,6 +66,29 @@ def load_secrets():
         return {}
 
 
+ID_HINT = {
+    "self": "当前对象实例的引用",
+    "cls": "当前类的引用",
+    "__init__": "初始化方法，创建对象时自动调用",
+    "__str__": "转字符串时调用",
+    "__repr__": "对象文字表示",
+    "__name__": "模块或类的名称",
+    "__main__": "主程序入口标志",
+}
+
+
+def ctx_hint(toks, i):
+    if i <= 0:
+        return None
+    prev = toks[i - 1]["text"]
+    if prev == "def": return "函数名"
+    if prev == "class": return "类名"
+    if prev in ("import", "from"): return "模块"
+    if prev == "as": return "别名"
+    if prev == "@": return "装饰器"
+    return None
+
+
 def categorize(tt):
     from pygments.token import Keyword, Name, Operator, Number, String, Literal
     if tt in Keyword: return "keyword"
@@ -151,11 +174,17 @@ def analyze(code, lang):
     for i, t in enumerate(toks):
         t["id"] = i
         t["weight"] = freq[t["text"]]
-    for t in toks:
+    for i, t in enumerate(toks):
         if t["cat"] == "keyword":
             t["explain"] = KW_HINT.get(t["text"], "关键字")
         elif t["cat"] == "identifier":
-            t["explain"] = None   # 标识符按需解释（/api/explain），避免分析时一次性解释全部、干等几十秒
+            if t["text"] in ID_HINT:
+                t["explain"] = ID_HINT[t["text"]]
+            else:
+                t["explain"] = None
+                h = ctx_hint(toks, i)
+                if h:
+                    t["quick"] = h
         else:
             t["explain"] = static_explain(t)
     counts = {c["key"]: sum(1 for t in toks if t["cat"] == c["key"]) for c in CATEGORIES}
@@ -190,12 +219,10 @@ def api_explain():
         return jsonify({"explain": None})
     try:
         numbered = "\n".join(f"{i+1}: {l}" for i, l in enumerate(code.split("\n")))
-        sys_msg = ("你是面向编程初学者的代码讲解助手。只解释用户指定的那一个标识符是什么、起什么作用，"
-                   "禁止修改代码、禁止评价或改进代码、禁止给任何建议。")
-        prompt = (f"代码：\n{numbered}\n\n用一句不超过 25 字的大白话，解释第 {line} 行的标识符 `{text}` "
-                  f"在这段代码里是什么、起什么作用。只输出 JSON：{{\"explain\":\"...\"}}")
+        sys_msg = "代码讲解助手。一句≤20字大白话解释指定标识符，只输出JSON。禁止改代码/给建议。"
+        prompt = (f"```\n{numbered}\n```\n第{line}行的`{text}`是什么、干什么？{{\"explain\":\"...\"}}")
         req = urllib.request.Request(SEC["base_url"].rstrip("/") + "/chat/completions",
-            data=json.dumps({"model": SEC["chat_model"],
+            data=json.dumps({"model": SEC["chat_model"], "max_tokens": 80, "temperature": 0,
                              "messages": [{"role": "system", "content": sys_msg}, {"role": "user", "content": prompt}]}).encode("utf-8"),
             method="POST", headers={"Authorization": "Bearer " + SEC["api_key"], "Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=40) as r:
@@ -221,4 +248,4 @@ if __name__ == "__main__":
     SEC = load_secrets()
     print(f"词法：Pygments；LLM 语义：{'ecnu-max（已配凭据）' if SEC.get('api_key') else '未配凭据（仅词法分类，无逐词解释）'}")
     print("打开 http://127.0.0.1:5000")
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
