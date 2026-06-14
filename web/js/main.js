@@ -7,7 +7,7 @@ const codeView = document.getElementById('code-view');
 const selcard = document.getElementById('selcard');
 const legend = document.getElementById('legend');
 
-let data = null, selected = -1, linksOn = true, centers = {};
+let data = null, selected = -1, linksOn = true, centers = {}, reqSeq = 0;
 const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 const rgb = (c) => `rgb(${Math.round(c[0]*255)},${Math.round(c[1]*255)},${Math.round(c[2]*255)})`;
 
@@ -23,8 +23,10 @@ const ctx = {
   get hasData() { return !!data; },
   get data() { return data; },
   analyze: async (code, lang) => {
+    const seq = ++reqSeq;
     const res = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, lang }) });
     const out = await res.json().catch(() => ({}));
+    if (seq !== reqSeq) return { stale: true };   // 已有更新的请求，丢弃这次旧结果，避免画面来回切换
     if (!res.ok || out.error) throw new Error(out.error || ('HTTP ' + res.status));
     data = out; render();
     return { count: out.tokens.length, llm: out.meta.llm };

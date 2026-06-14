@@ -42,6 +42,18 @@ OP_HINT = {
     "and": "并且（逻辑与）", "or": "或者（逻辑或）", "not": "取反", "+=": "加到自己身上", "->": "返回类型标注",
 }
 
+# 关键字固定解释（语言层面恒定，不必每次问 LLM —— 又快又稳）
+KW_HINT = {
+    "def": "定义一个函数", "return": "把结果返回给调用处", "if": "如果条件成立就执行", "elif": "否则如果",
+    "else": "否则", "for": "循环：依次取每个元素", "while": "当条件成立时反复执行", "in": "判断是否在其中 / 遍历",
+    "import": "导入一个模块", "from": "从模块里导入", "as": "起一个别名", "class": "定义一个类",
+    "pass": "占位，什么也不做", "break": "跳出循环", "continue": "跳过本次、进入下一轮", "with": "在上下文中执行，用完自动收尾",
+    "try": "尝试执行", "except": "捕获异常", "finally": "无论如何都执行", "raise": "抛出异常", "lambda": "匿名小函数",
+    "yield": "生成器逐个返回值", "global": "声明使用全局变量", "nonlocal": "使用外层函数的变量",
+    "and": "逻辑与（并且）", "or": "逻辑或（或者）", "not": "逻辑取反", "is": "判断是否同一个对象",
+    "None": "空值", "True": "真", "False": "假", "async": "异步定义", "await": "等待异步结果", "del": "删除",
+}
+
 
 def load_secrets():
     p = os.path.join(HERE, "secrets.json")
@@ -139,11 +151,13 @@ def analyze(code, lang):
     for i, t in enumerate(toks):
         t["id"] = i
         t["weight"] = freq[t["text"]]
-    targets = [t for t in toks if t["cat"] in ("keyword", "identifier")]
+    targets = [t for t in toks if t["cat"] == "identifier"]   # 只让 LLM 解释标识符；关键字用固定字典
     ex = llm_explain(code, targets)
     for t in toks:
-        if t["cat"] in ("keyword", "identifier"):
+        if t["cat"] == "identifier":
             t["explain"] = ex.get((t["text"], t["line"])) or None
+        elif t["cat"] == "keyword":
+            t["explain"] = KW_HINT.get(t["text"], "关键字")
         else:
             t["explain"] = static_explain(t)
     counts = {c["key"]: sum(1 for t in toks if t["cat"] == c["key"]) for c in CATEGORIES}

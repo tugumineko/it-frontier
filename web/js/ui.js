@@ -4,17 +4,28 @@ export function setupUI(ctx) {
   const lang = document.getElementById('lang');
   const status = document.getElementById('analyze-status');
 
+  let busy = false;
+  const setBusy = (b) => {
+    busy = b;
+    document.getElementById('btn-analyze').disabled = b;
+    document.querySelectorAll('.samples button').forEach((x) => { x.disabled = b; });
+  };
   const run = async () => {
+    if (busy) return;   // 分析中忽略重复触发，避免请求积压、画面来回切换
     const code = input.value.trim();
     if (!code) { status.textContent = '请先在上方粘贴一段代码。'; return; }
-    status.textContent = '正在词法分析 + ecnu-max 逐词解释…（约 20 秒）';
+    setBusy(true);
+    status.textContent = '正在词法分析 + ecnu-max 逐词解释…（约 15-20 秒，请勿重复点击）';
     try {
       const r = await ctx.analyze(code, lang.value);
+      if (r.stale) return;   // 被更新的请求取代
       status.textContent = r.llm
         ? `完成：${r.count} 个 token。点代码里的词、或地图上的点，看它在这里是什么、干嘛。`
         : `完成：${r.count} 个 token（仅词法分类）。配 ECNU 凭据后会有逐词大白话解释。`;
     } catch (e) {
       status.innerHTML = '⚠ 失败（需后端，从 <b>http://127.0.0.1:5000</b> 打开）：' + esc(String(e.message || e));
+    } finally {
+      setBusy(false);
     }
   };
   document.getElementById('btn-analyze').onclick = run;
