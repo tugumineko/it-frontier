@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>代码词法地图 · 课程汇报</title>
+<style>
+:root{--bg:#0a0e1a;--card:#111827;--accent:#5b8cff;--kw:#b794ff;--id:#66b8ff;--op:#ff9e4d;--lit:#80d98c;--txt:#e2e8f0;--dim:#a8b4cf;--gold:#ffd36b}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--txt);font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;overflow:hidden}
+.slide{display:none;flex-direction:column;justify-content:center;align-items:center;height:100vh;padding:60px 100px;position:relative}
+.slide.active{display:flex}
+/* nav */
+.nav{position:fixed;bottom:24px;right:32px;z-index:10;font-size:13px;color:var(--dim);display:flex;gap:14px;align-items:center}
+.nav button{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:var(--dim);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px}
+.nav button:hover{color:#fff;border-color:var(--accent)}
+.progress{position:fixed;top:0;left:0;height:3px;background:var(--accent);transition:width .3s;z-index:10}
+/* typography */
+h1{font-size:52px;font-weight:700;letter-spacing:1px;line-height:1.3}
+h2{font-size:36px;font-weight:700;margin-bottom:28px;line-height:1.35}
+h3{font-size:22px;font-weight:600;color:var(--accent);margin-bottom:14px}
+p,.item{font-size:20px;line-height:1.75;color:var(--txt);max-width:960px}
+.sub{font-size:22px;color:var(--dim);margin-top:12px;font-weight:400}
+.tag{display:inline-block;font-size:13px;padding:3px 12px;border-radius:999px;background:rgba(91,140,255,.15);color:var(--accent);margin-bottom:18px;font-weight:600;letter-spacing:.5px}
+.accent{color:var(--accent)}
+.gold{color:var(--gold)}
+.kw{color:var(--kw)}
+.id{color:var(--id)}
+.op{color:var(--op)}
+.lt{color:var(--lit)}
+b{font-weight:700}
+/* layout helpers */
+.cols{display:flex;gap:48px;width:100%;max-width:1060px;align-items:flex-start}
+.col{flex:1}
+.left-align{align-items:flex-start;text-align:left}
+.center{text-align:center}
+/* cards */
+.card{background:var(--card);border:1px solid rgba(255,255,255,.07);border-radius:14px;padding:22px 26px;margin-bottom:16px}
+.card h3{margin-bottom:8px}
+.card p{font-size:17px;color:var(--dim);line-height:1.6}
+/* table */
+table{border-collapse:collapse;width:100%;max-width:960px;font-size:17px;margin-top:8px}
+th{text-align:left;padding:10px 14px;color:var(--dim);font-weight:600;border-bottom:2px solid rgba(255,255,255,.1);font-size:15px;text-transform:uppercase;letter-spacing:.5px}
+td{padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.05)}
+tr:last-child td{border-bottom:none}
+tr.hl td{background:rgba(91,140,255,.08);color:#fff;font-weight:600}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+/* step list */
+.steps{list-style:none;counter-reset:s;max-width:800px}
+.steps li{counter-increment:s;display:flex;gap:16px;margin-bottom:18px;font-size:19px;line-height:1.65}
+.steps li::before{content:counter(s);flex:0 0 36px;height:36px;display:flex;align-items:center;justify-content:center;background:rgba(91,140,255,.15);color:var(--accent);border-radius:50%;font-weight:700;font-size:16px}
+/* arch diagram */
+.arch{display:flex;gap:0;align-items:stretch;max-width:900px;width:100%;margin-top:8px}
+.arch .box{flex:1;padding:20px 18px;border:1px solid rgba(255,255,255,.1);text-align:center;position:relative}
+.arch .box:first-child{border-radius:12px 0 0 12px}
+.arch .box:last-child{border-radius:0 12px 12px 0}
+.arch .box h3{font-size:15px;margin-bottom:8px}
+.arch .box p{font-size:14px;color:var(--dim);line-height:1.5}
+.arch .arrow{flex:0 0 32px;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:22px}
+/* perf bar */
+.bar-group{max-width:700px;width:100%;margin-top:12px}
+.bar-row{display:flex;align-items:center;gap:14px;margin-bottom:14px;font-size:16px}
+.bar-label{flex:0 0 200px;text-align:right;color:var(--dim)}
+.bar-track{flex:1;height:28px;background:rgba(255,255,255,.04);border-radius:6px;overflow:hidden;position:relative}
+.bar-fill{height:100%;border-radius:6px;display:flex;align-items:center;padding-left:10px;font-size:13px;font-weight:600;color:#fff;white-space:nowrap}
+.bar-fill.slow{background:linear-gradient(90deg,#ff6b6b,#ee5a24);width:100%}
+.bar-fill.fast{background:linear-gradient(90deg,var(--accent),#38bdf8)}
+/* footer */
+.footer{position:fixed;bottom:24px;left:32px;font-size:12px;color:rgba(255,255,255,.2)}
+/* animations */
+@keyframes fadeUp{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+.slide.active>*{animation:fadeUp .5s ease both}
+.slide.active>*:nth-child(2){animation-delay:.08s}
+.slide.active>*:nth-child(3){animation-delay:.16s}
+.slide.active>*:nth-child(4){animation-delay:.24s}
+.slide.active>*:nth-child(5){animation-delay:.32s}
+</style>
+</head>
+<body>
+
+<div class="progress" id="bar"></div>
+
+<!-- ==================== Slide 1: Title ==================== -->
+<section class="slide active center" id="s0">
+  <span class="tag">信息技术前沿创新 · 课程汇报</span>
+  <h1>代码词法地图</h1>
+  <p class="sub">编译器词法分类 × LLM 逐词语义，帮编程初学者<b class="gold">看懂每个单词</b></p>
+</section>
+
+<!-- ==================== Slide 2: Problem ==================== -->
+<section class="slide left-align" id="s1">
+  <span class="tag">出发点</span>
+  <h2>初学者面对代码的第一个困惑</h2>
+  <div class="cols">
+    <div class="col">
+      <div class="card">
+        <h3>现状</h3>
+        <p>AI 代码解释工具（ChatGPT、Copilot Chat）以<b>整行或整段</b>为粒度给出笼统说明，跳过了最基础的一步。</p>
+      </div>
+      <div class="card">
+        <h3>语法高亮的局限</h3>
+        <p>IDE 能给不同类型的词着色，但无法告诉初学者「这个词在<b>这段代码</b>里具体干什么」。</p>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card" style="border-color:var(--accent)">
+        <h3 style="color:var(--gold)">我们要解决的问题</h3>
+        <p>以 <b>token（词法单元）</b>为粒度，逐个告诉初学者：这个词属于哪类，在当前上下文中起什么作用。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== Slide 3: Innovation ==================== -->
+<section class="slide left-align" id="s2">
+  <span class="tag">核心创新</span>
+  <h2>编译器词法 + LLM 语义的<b class="gold">组合创新</b></h2>
+  <p style="margin-bottom:24px;max-width:860px">将确定性的词法分类和灵活的上下文语义解释在 <b>token（词法单元）粒度</b>上组合。这个组合在已有工具中没有先例。</p>
+  <table>
+    <tr><th>工具</th><th>粒度</th><th>分类</th><th>语义解释</th><th>面向</th></tr>
+    <tr><td>语法高亮（VS Code 等）</td><td>词法单元</td><td>正则 / TextMate</td><td>无</td><td>所有开发者</td></tr>
+    <tr><td>AST Explorer</td><td>AST 节点</td><td>编译器解析</td><td>无</td><td>有经验的开发者</td></tr>
+    <tr><td>explainshell</td><td>命令片段</td><td>手工标注</td><td>静态文档</td><td>Shell 用户</td></tr>
+    <tr><td>AI 代码解释（ChatGPT 等）</td><td>行或段</td><td>无</td><td>LLM 生成</td><td>所有用户</td></tr>
+    <tr class="hl"><td><b>代码词法地图</b></td><td><b>词法单元</b></td><td><b>Pygments 编译器级</b></td><td><b>LLM 逐词上下文</b></td><td><b>编程初学者</b></td></tr>
+  </table>
+</section>
+
+<!-- ==================== Slide 4: Demo Flow ==================== -->
+<section class="slide left-align" id="s3">
+  <span class="tag">工具演示</span>
+  <h2>四步体验</h2>
+  <ol class="steps">
+    <li><div><b>粘贴代码，点击分析</b><br><span style="color:var(--dim)">Pygments 词法分析在 0.1 秒内把代码切成 token（词法单元），分到<span class="kw">关键字</span>、<span class="id">标识符</span>、<span class="op">运算符</span>、<span class="lt">字面量</span>四区，生成 2D 词法地图。</span></div></li>
+    <li><div><b>点击任意词，看它在这里干嘛</b><br><span style="color:var(--dim)">三视图联动：地图圆点亮起、代码行高亮、语义卡片弹出。固定字典和上下文提示秒出，LLM 深层解释约 1 秒到达后替换。</span></div></li>
+    <li><div><b>分级样例引导</b><br><span style="color:var(--dim)">五个内置样例从「x = 10」到一词多义，降低「不知道从哪下手」的门槛。</span></div></li>
+    <li><div><b>导出与复用</b><br><span style="color:var(--dim)">分析结果可导出 JSON，教师预分析后分发给学生。</span></div></li>
+  </ol>
+</section>
+
+<!-- ==================== Slide 5: Architecture ==================== -->
+<section class="slide left-align" id="s4">
+  <span class="tag">方案架构</span>
+  <h2>三层架构</h2>
+  <div class="arch">
+    <div class="box" style="background:rgba(183,148,255,.08)">
+      <h3 style="color:var(--kw)">词法引擎</h3>
+      <p>Pygments 词法分析<br/>确定性分类<br/>多语言支持<br/>字符串片段合并</p>
+    </div>
+    <div class="arrow">→</div>
+    <div class="box" style="background:rgba(102,184,255,.08)">
+      <h3 style="color:var(--id)">语义引擎</h3>
+      <p>固定字典（关键字、运算符）<br/>上下文推断（ctx_hint）<br/>ecnu-max 按需解释<br/>max_tokens 控制生成</p>
+    </div>
+    <div class="arrow">→</div>
+    <div class="box" style="background:rgba(255,158,77,.08)">
+      <h3 style="color:var(--op)">交互层</h3>
+      <p>SVG 四区地图<br/>代码面板着色<br/>三视图联动<br/>语义卡片分级显示</p>
+    </div>
+  </div>
+  <p style="margin-top:28px;font-size:17px;color:var(--dim)">后端：Flask + Pygments + urllib（无 torch/transformers 等重型依赖）<br/>前端：原生 JavaScript + SVG（无框架依赖）</p>
+</section>
+
+<!-- ==================== Slide 6: Tiered Explain ==================== -->
+<section class="slide left-align" id="s5">
+  <span class="tag">技术要点</span>
+  <h2>分级解释策略</h2>
+  <div class="cols">
+    <div class="col">
+      <div class="card">
+        <h3 style="color:var(--gold)">第一级 · 固定字典</h3>
+        <p><b>0 ms</b>。关键字（def、return、if）、运算符（=、+、==）、常见标识符（self、cls）含义恒定，硬编码查表。</p>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--accent)">第二级 · 上下文提示</h3>
+        <p><b>0 ms</b>。def 后面 → 「函数名」，class 后面 → 「类名」，import 后面 → 「模块」。先行显示，等 LLM 到了再替换。</p>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--id)">第三级 · LLM 深层解释</h3>
+        <p><b>~1 s</b>。ecnu-max 根据完整代码上下文，给出不超过 20 字的一句话解释。多个请求并发执行。</p>
+      </div>
+    </div>
+    <div class="col" style="flex:0 0 340px">
+      <div class="card" style="border-color:var(--accent);text-align:center;padding:28px">
+        <p style="font-size:15px;color:var(--dim);margin-bottom:12px">典型代码中各级覆盖比例</p>
+        <div style="display:flex;height:18px;border-radius:9px;overflow:hidden;margin-bottom:14px">
+          <div style="flex:35;background:var(--gold)" title="固定字典"></div>
+          <div style="flex:25;background:var(--accent)" title="上下文提示"></div>
+          <div style="flex:40;background:var(--id)" title="LLM"></div>
+        </div>
+        <div style="font-size:13px;color:var(--dim);display:flex;justify-content:space-between">
+          <span><span class="dot" style="background:var(--gold)"></span>字典 ~35%</span>
+          <span><span class="dot" style="background:var(--accent)"></span>上下文 ~25%</span>
+          <span><span class="dot" style="background:var(--id)"></span>LLM ~40%</span>
+        </div>
+        <p style="margin-top:18px;font-size:14px;color:var(--dim)">约 <b style="color:var(--gold)">60%</b> 的词法单元无需 LLM 即可获得有意义的解释</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== Slide 7: Performance ==================== -->
+<section class="slide left-align" id="s6">
+  <span class="tag">技术要点</span>
+  <h2>性能优化</h2>
+  <p style="margin-bottom:24px">从最初的 50 秒到现在的亚秒级响应，经过三轮优化。</p>
+  <div class="bar-group">
+    <div class="bar-row"><span class="bar-label">v1 一次性 LLM 全解释</span><div class="bar-track"><div class="bar-fill slow">50.1 s</div></div></div>
+    <div class="bar-row"><span class="bar-label">v2 词法秒出 + 按需解释</span><div class="bar-track"><div class="bar-fill fast" style="width:1.6%">0.6 s + 点击 ~1 s</div></div></div>
+    <div class="bar-row"><span class="bar-label">v3 分级策略 + 多线程并发</span><div class="bar-track"><div class="bar-fill fast" style="width:1.4%;background:linear-gradient(90deg,var(--gold),#f59e0b)">0.1 s + 字典秒出 / 并发 0.7 s</div></div></div>
+  </div>
+  <table style="margin-top:32px;max-width:700px">
+    <tr><th>优化手段</th><th>效果</th></tr>
+    <tr><td>词法分析与语义解释分离</td><td>地图 0.1 秒出现</td></tr>
+    <tr><td>固定字典 + 上下文推断</td><td>60% 的词法单元 0 ms 响应</td></tr>
+    <tr><td>Flask threaded=True</td><td>5 个并发请求 3.2 s → 0.7 s</td></tr>
+    <tr><td>prompt 压缩 + max_tokens 限制</td><td>单次 LLM 响应更快</td></tr>
+    <tr><td>reqSeq 序列号 + busy 防重入</td><td>消除画面切换和请求积压</td></tr>
+  </table>
+</section>
+
+<!-- ==================== Slide 8: Summary ==================== -->
+<section class="slide center" id="s7">
+  <span class="tag">总结</span>
+  <h1 style="font-size:42px">编译器告诉你「这是什么词」<br/>LLM 告诉你「它在这里干嘛」</h1>
+  <p class="sub" style="max-width:680px">两者各司其职，在 token（词法单元）粒度上组合，把词法分析从黑箱变成可交互的初学者教学体验。</p>
+  <div style="margin-top:40px;display:flex;gap:28px;justify-content:center">
+    <div class="card" style="width:200px;text-align:center"><h3>词法分类</h3><p>Pygments<br/>确定、快速、免费</p></div>
+    <div class="card" style="width:200px;text-align:center"><h3>语义解释</h3><p>ecnu-max<br/>灵活、上下文相关</p></div>
+    <div class="card" style="width:200px;text-align:center"><h3>交互可视化</h3><p>SVG 四区地图<br/>三视图联动</p></div>
+  </div>
+  <p style="margin-top:36px;font-size:16px;color:var(--dim)">谢谢</p>
+</section>
+
+<!-- Navigation -->
+<div class="nav">
+  <button onclick="go(-1)">← 上一页</button>
+  <span id="pn"></span>
+  <button onclick="go(1)">下一页 →</button>
+</div>
+<div class="footer">代码词法地图 · 信息技术前沿创新</div>
+
+<script>
+const slides=document.querySelectorAll('.slide'),bar=document.getElementById('bar'),pn=document.getElementById('pn');
+let cur=0;
+function show(i){slides.forEach(s=>s.classList.remove('active'));slides[i].classList.add('active');bar.style.width=((i/(slides.length-1))*100)+'%';pn.textContent=(i+1)+' / '+slides.length;}
+function go(d){const n=cur+d;if(n>=0&&n<slides.length){cur=n;show(cur);}}
+document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key===' '||e.key==='Enter'){e.preventDefault();go(1);}if(e.key==='ArrowLeft'){e.preventDefault();go(-1);}});
+show(0);
+</script>
+</body>
+</html>
