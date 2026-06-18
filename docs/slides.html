@@ -98,8 +98,8 @@ tr.hl td{background:rgba(91,140,255,.08);color:#fff;font-weight:600}
         <p>AI 代码解释工具（ChatGPT、Copilot Chat）以<b>整行或整段</b>为粒度给出笼统说明，跳过了最基础的一步。</p>
       </div>
       <div class="card">
-        <h3>语法高亮的局限</h3>
-        <p>IDE 能给不同类型的词着色，但无法告诉初学者「这个词在<b>这段代码</b>里具体干什么」。</p>
+        <h3>学习大部头语法书的困境</h3>
+        <p>语法书能系统讲规则，但初学者很难把抽象概念立刻对应到<b>眼前这段代码</b>里的每一个词。</p>
       </div>
     </div>
     <div class="col">
@@ -203,11 +203,11 @@ tr.hl td{background:rgba(91,140,255,.08);color:#fff;font-weight:600}
 <section class="slide left-align" id="s6">
   <span class="tag">技术要点</span>
   <h2>性能优化</h2>
-  <p style="margin-bottom:24px">从最初的 50 秒到现在的亚秒级响应，经过三轮优化。</p>
+  <p style="margin-bottom:24px">这不是三套并存方案，而是从基线实现出发，经过两次优化迭代得到的当前响应链路。</p>
   <div class="bar-group">
-    <div class="bar-row"><span class="bar-label">v1 一次性 LLM 全解释</span><div class="bar-track"><div class="bar-fill slow">50.1 s</div></div></div>
-    <div class="bar-row"><span class="bar-label">v2 词法秒出 + 按需解释</span><div class="bar-track"><div class="bar-fill fast" style="width:1.6%">0.6 s + 点击 ~1 s</div></div></div>
-    <div class="bar-row"><span class="bar-label">v3 分级策略 + 多线程并发</span><div class="bar-track"><div class="bar-fill fast" style="width:1.4%;background:linear-gradient(90deg,var(--gold),#f59e0b)">0.1 s + 字典秒出 / 并发 0.7 s</div></div></div>
+    <div class="bar-row"><span class="bar-label">基线实现：一次性 LLM 全解释</span><div class="bar-track"><div class="bar-fill slow">50.1 s</div></div></div>
+    <div class="bar-row"><span class="bar-label">第一次迭代：词法先出图 + 按需解释</span><div class="bar-track"><div class="bar-fill fast" style="width:1.6%">0.6 s + 点击 ~1 s</div></div></div>
+    <div class="bar-row"><span class="bar-label">第二次迭代（当前）：分级策略 + 多线程并发</span><div class="bar-track"><div class="bar-fill fast" style="width:1.4%;background:linear-gradient(90deg,var(--gold),#f59e0b)">0.1 s + 字典秒出 / 并发 0.7 s</div></div></div>
   </div>
   <table style="margin-top:32px;max-width:700px">
     <tr><th>优化手段</th><th>效果</th></tr>
